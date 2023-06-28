@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 Add-Type -AssemblyName System.Windows.Forms
 
 # Define the form
@@ -85,15 +86,32 @@ $form.Controls.Add($button)
 $brokerArray = @(
     "rdbroker1.shastahealth.org",
     "rdbroker2.shastahealth.org"
+=======
+$brokerArray = @(
+	"rdbroker1.shastahealth.org"
+	,"rdbroker2.shastahealth.org"
+>>>>>>> c18b3e732ebbc3ed78a55850c6db289a75739d3b
 )
 
 $sessionData = @() # Initialize an empty array
 
 ForEach ($connectionBroker in $brokerArray) {
+<<<<<<< HEAD
     $sessionData += Get-RDUserSession -ConnectionBroker $connectionBroker
+=======
+	$sessionData += Get-RDUserSession -ConnectionBroker $connectionBroker
+>>>>>>> c18b3e732ebbc3ed78a55850c6db289a75739d3b
 }
 
 $sessionData = $sessionData | Sort-Object -Property Username
 
+<<<<<<< HEAD
 # Show the form
 $result = $form.ShowDialog()
+=======
+$filteredUser = $sessionData | Where-Object { $_.Username -eq "whughes" }
+$filteredUser
+if ($filteredUser) {
+    Invoke-RDUserLogoff -HostServer $filteredUser.HostServer -UnifiedSessionID $filteredUser.SessionID
+}
+>>>>>>> c18b3e732ebbc3ed78a55850c6db289a75739d3b
