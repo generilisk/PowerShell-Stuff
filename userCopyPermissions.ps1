@@ -12,10 +12,20 @@ $copiedGroups = @()
 
 # Add groups from the source user to the target user
 foreach ($group in $groupsSourceUser) {
-    $copiedGroups += $group.Name
-    Add-ADGroupMember -Identity $group.Name -Members $targetUser
+    try {
+        Add-ADGroupMember -Identity $group.Name -Members $targetUser
+        $copiedGroups += $group.Name
+        } catch {
+        if ($_.Exception.Message -like "*already a member*") {
+            Write-Host "$targetUser is already a member of $group, no copy needed."
+        } else {
+            # Handle other errors here
+            Write-Host "An error occurred: $($_.Exception.Message)"
+        }
+    }
 }
 
 # Display the copied groups
 Write-Host "Copied Groups from $($sourceUser) to $($targetUser):"
 $copiedGroups | ForEach-Object { Write-Host $_ }
+Read-Host -Prompt "Press any key to continue"
