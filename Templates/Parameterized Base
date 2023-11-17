@@ -1,0 +1,8 @@
+param(
+    [Parameter(Mandatory=$True)]
+    [string[]]$computerName
+
+)
+foreach($target in $computerName){
+    #doSomeStuff
+}
