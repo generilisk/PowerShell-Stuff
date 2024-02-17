@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory=$True)]
-    [string[]]$computerName
+    [string[]]$LogName,
+    [string[]]$computerName = $env:COMPUTERNAME,
+    [int32]$Newest = 500
 
 )
 foreach($target in $computerName){
