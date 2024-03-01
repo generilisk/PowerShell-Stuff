@@ -8,3 +8,5 @@ param(
 foreach($target in $computerName){
     #doSomeStuff
 }
+#Select-Object example
+Get-Service | Select-Object DisplayName, Status, StartType
