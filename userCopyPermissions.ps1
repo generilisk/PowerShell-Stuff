@@ -15,10 +15,12 @@ foreach ($group in $groupsSourceUser) {
     try {
         Add-ADGroupMember -Identity $group.Name -Members $targetUser
         $copiedGroups += $group.Name
-        } catch {
+    }
+    catch {
         if ($_.Exception.Message -like "*already a member*") {
             Write-Host "$targetUser is already a member of $group, no copy needed."
-        } else {
+        }
+        else {
             # Handle other errors here
             Write-Host "An error occurred: $($_.Exception.Message)"
         }

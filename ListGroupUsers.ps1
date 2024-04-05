@@ -6,10 +6,12 @@ try {
     $groupMembers = Get-ADGroupMember -Identity $groupName -Recursive | Select-Object Name | Sort-Object Name
     if ($groupMembers.Count -eq 0) {
         Write-Host "No users found in the specified group."
-    } else {
+    }
+    else {
         Write-Host "Users in the group '$groupName':"
         $groupMembers | Format-Table -AutoSize
     }
-} catch {
+}
+catch {
     Write-Host "Error: $_"
 }
