@@ -12,3 +12,4 @@ if ($user) {
 } else {
     Write-Host "No user found with the badge number: $badgeNumber"
 }
+Read-Host "Press Enter to continue..."
