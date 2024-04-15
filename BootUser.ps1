@@ -1,4 +1,4 @@
-Add-Type -AssemblyName System.Windows.Forms
+﻿Add-Type -AssemblyName System.Windows.Forms
 
 # Define the form
 $form = New-Object System.Windows.Forms.Form
@@ -27,56 +27,45 @@ $button.Text = "OK"
 $button.Add_Click({
     $username = $textBox.Text
     $filteredUser = $sessionData | Where-Object { $_.Username -eq $username }
-    if ($filteredUser) {
-        # Display user information
-        $infoForm = New-Object System.Windows.Forms.Form
-        $infoForm.Text = "User Information"
-        $infoForm.Size = New-Object System.Drawing.Size(400, 200)
-        $infoForm.StartPosition = "CenterScreen"
+    
+    if ($filteredUser.Count -gt 0) {
+        # Display user sessions
+        $sessionForm = New-Object System.Windows.Forms.Form
+        $sessionForm.Text = "User Sessions"
+        $sessionForm.Size = New-Object System.Drawing.Size(400, 300)
+        $sessionForm.StartPosition = "CenterScreen"
 
-        $infoLabel = New-Object System.Windows.Forms.Label
-        $infoLabel.Location = New-Object System.Drawing.Point(10, 20)
-        $infoLabel.Size = New-Object System.Drawing.Size(370, 20)
-        $infoLabel.Text = "User Information:"
-        $infoForm.Controls.Add($infoLabel)
+        $sessionLabel = New-Object System.Windows.Forms.Label
+        $sessionLabel.Location = New-Object System.Drawing.Point(10, 20)
+        $sessionLabel.Size = New-Object System.Drawing.Size(370, 20)
+        $sessionLabel.Text = "Select sessions to log off:"
+        $sessionForm.Controls.Add($sessionLabel)
 
-        $infoTextBox = New-Object System.Windows.Forms.TextBox
-        $infoTextBox.Location = New-Object System.Drawing.Point(10, 40)
-        $infoTextBox.Size = New-Object System.Drawing.Size(370, 80)
-        $infoTextBox.Multiline = $true
-        $infoTextBox.ReadOnly = $true
-        $infoTextBox.Text = "Username: $($filteredUser.UserName)`r`nHost Server: $($filteredUser.HostServer)`r`nCollection: $($filteredUser.CollectionName)`r`nUnified Session ID: $($filteredUser.UnifiedSessionID)"
-        $infoForm.Controls.Add($infoTextBox)
+        $sessionListBox = New-Object System.Windows.Forms.CheckedListBox
+        $sessionListBox.Location = New-Object System.Drawing.Point(10, 40)
+        $sessionListBox.Size = New-Object System.Drawing.Size(370, 150)
+        foreach ($user in $filteredUser) {
+            $sessionListBox.Items.Add("$($user.HostServer) - $($user.SessionID)")
+        }
+        $sessionForm.Controls.Add($sessionListBox)
 
-        $buttonPanel = New-Object System.Windows.Forms.Panel
-        $buttonPanel.Location = New-Object System.Drawing.Point(10, 130)
-        $buttonPanel.Size = New-Object System.Drawing.Size(370, 40)
-        $infoForm.Controls.Add($buttonPanel)
-
-        $logoffButton = New-Object System.Windows.Forms.Button
-        $logoffButton.Location = New-Object System.Drawing.Point(0, 0)
-        $logoffButton.Size = New-Object System.Drawing.Size(100, 30)
-        $logoffButton.Text = "Logoff"
-        $logoffButton.Add_Click({
-            Invoke-RDUserLogoff -HostServer $filteredUser.HostServer -UnifiedSessionID $filteredUser.SessionID
+        $sessionButton = New-Object System.Windows.Forms.Button
+        $sessionButton.Location = New-Object System.Drawing.Point(150, 200)
+        $sessionButton.Size = New-Object System.Drawing.Size(100, 30)
+        $sessionButton.Text = "Log off"
+        $sessionButton.Add_Click({
+            foreach ($index in $sessionListBox.CheckedIndices) {
+                $selectedSession = $filteredUser[$index]
+                Invoke-RDUserLogoff -HostServer $selectedSession.HostServer -UnifiedSessionID $selectedSession.SessionID
+            }
             $form.Close()
-            $infoForm.Close()
+            $sessionForm.Close()
         })
-        $buttonPanel.Controls.Add($logoffButton)
+        $sessionForm.Controls.Add($sessionButton)
 
-        $okButton = New-Object System.Windows.Forms.Button
-        $okButton.Location = New-Object System.Drawing.Point(120, 0)
-        $okButton.Size = New-Object System.Drawing.Size(100, 30)
-        $okButton.Text = "OK"
-        $okButton.Add_Click({
-            $form.Close()
-            $infoForm.Close()
-        })
-        $buttonPanel.Controls.Add($okButton)
-
-        $infoForm.ShowDialog() | Out-Null
+        $sessionForm.ShowDialog() | Out-Null
     } else {
-        [System.Windows.Forms.MessageBox]::Show("No session found for user: $username", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        [System.Windows.Forms.MessageBox]::Show("No sessions found for user: $username", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
     }
 })
 $form.Controls.Add($button)
