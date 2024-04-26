@@ -1,4 +1,4 @@
-﻿clear
+﻿Clear-Host
 $MedCollection = @(
 'Medical01',
 'Medical02',
