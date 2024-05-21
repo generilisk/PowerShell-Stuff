@@ -60,5 +60,24 @@ Dism /online /Enable-Feature /FeatureName:NetFx3
 # Step 14: Add NetFx3 capability from source
 #Add-WindowsCapability -Online -Name NetFx3~~~~ -Source "\\Rdmps02\sources\os\zWin10DOTNET"
 
-# Step 15: Run setup.exe as admin
+# Step 15: Copy EDR Files
+$sourcePathEDR = "\\ngroot\NextGenRoot\Prod\EDR"
+$destinationPathEDR = "C:\Nextgen"
+robocopy $sourcePathEDR $destinationPathEDR /E
+
+# Step 16: Copy Custom Provider View
+$sourcePathEHR = "\\ngroot\nextgenroot\Prod\EHR"
+$destinationPathEHR = "C:\NextGen"
+robocopy $sourcePathEHR $destinationPathEHR /E
+
+# Step 17: Install Custom Font
+$scriptPathFont = "\\shastahealth.org\shared\ITS\Store\Software\NextGen\scripts\NGFont\install_font.ps1"
+Start-Process -FilePath "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList "-executionpolicy bypass -File `"$scriptPathFont`"" -Verb RunAs
+
+# Step 18: Copy Nextgen Shortcut
+$sourcePathShortcut = "\\shastahealth.org\shared\ITS\Store\Software\Shortcuts\NextGen 5.lnk"
+$destinationPathShortcut = "C:\Users\Public\Desktop"
+Copy-Item -Path $sourcePathShortcut -Destination $destinationPathShortcut
+
+# Step 19: Run setup.exe as admin
 Start-Process -FilePath "\\ngroot\NextGenRoot\Install\Install\NextGen Setup\setup.exe" -Verb RunAs
