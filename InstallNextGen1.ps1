@@ -2,7 +2,7 @@
 Start-Process -FilePath "\\shastahealth.org\shared\ITS\Store\Software\ODBC\17\VC_redist.x64.exe" -ArgumentList "/q" -Verb RunAs -Wait
 
 # Step 2: Install Sqlnclix64.msi -> Redo this one
-Start-Process -FilePath "msiexec.exe" -ArgumentList "/i \\shastahealth.org\shared\ITS\Store\Software\ODBC\17\Sqlnclix64.msi /qn" -Wait
+Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"`\\shastahealth.org\shared\ITS\Store\Software\ODBC\17\Sqlnclix64.msi`"` /qn" -Wait
 
 # Step 3: Run Create_ODBC.exe from Prod folder
 Start-Process -FilePath "\\shastahealth.org\shared\ITS\Store\Software\ODBC\17\Prod\Create_ODBC.exe" -Wait
