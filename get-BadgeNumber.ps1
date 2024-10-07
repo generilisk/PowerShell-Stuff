@@ -1,5 +1,3 @@
-powershell
-Copy code
 <#
 .SYNOPSIS
     Retrieves the badge number for a specified user from Active Directory.
@@ -22,6 +20,11 @@ Copy code
     This example prompts the user to enter a username (`nonexistentuser`) and provides an error message when the user is not found.
 #>
 
+# Script Name: Get-BadgeNumber.ps1
+#Created by Will Hughes
+#Date: 2024-08-07
+#Patch Notes:
+
 #Prompt for the user name
 $userName = Read-Host "Enter username to find matching badge number"
 
@@ -34,10 +37,3 @@ try {
 catch {
     Write-Host "Unable to find $userName, please check spelling"
 }
-
-
-
-
-# Script Name: Get-BadgeNumber.ps1
-#Created by Will Hughes
-#Patch Notes:
