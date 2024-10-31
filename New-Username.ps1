@@ -29,13 +29,13 @@ function New-Username {
         {$_.Length -gt 6} {
             $username = ($firstName.Substring(0,1) + $lastName)
         }
-        {$_.Length + $firstName.Length -lt 8} {
+        {$_.Length + $firstName.Length -le 8} {
             $username = ($firstName + $lastName)
         }
-        {($_.Length -lt 7) -and ($_.Length + $firstName.Length -ge 8)} {
-            $trimLength = 8 - $lastName.Length
+        {($_.Length -lt 7) -and ($_.Length + $firstName.Length -gt 8)} {
+            $trimLength = (8 - $lastName.Length)
             $firstNameTrimmed = $firstName.Substring(1,$trimLength)
-            $username = $firstNameTrimmed+$lastName
+            $username = $firstNameTrimmed  + $lastName
         }
     }
     Write-Output "Generated username: $username"
