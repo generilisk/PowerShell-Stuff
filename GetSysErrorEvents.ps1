@@ -11,8 +11,9 @@
 
 #Script Name: GetSysErrorEvents
 #Created by Will Hughes
-#Date: 2024.02.16
+#Date: 2024-02-16
 #Patch Notes:
+
 Param(
     [string]$Log = "System",
     [string]$computerName = $env:COMPUTERNAME,
