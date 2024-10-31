@@ -27,14 +27,14 @@ function New-Username {
 
     switch($lastName){
         {$_.Length -gt 6} {
-            $username = ($firstName.Substring(0,1) + $lastName)
+            $username = ($firstName.Substring(0,0) + $lastName)
         }
         {$_.Length + $firstName.Length -le 8} {
             $username = ($firstName + $lastName)
         }
         {($_.Length -lt 7) -and ($_.Length + $firstName.Length -gt 8)} {
             $trimLength = (8 - $lastName.Length)
-            $firstNameTrimmed = $firstName.Substring(1,$trimLength)
+            $firstNameTrimmed = $firstName.Substring(0,$trimLength)
             $username = $firstNameTrimmed  + $lastName
         }
     }
