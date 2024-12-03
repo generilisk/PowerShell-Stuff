@@ -3,7 +3,6 @@
     Retrieves the badge number for a specified user from Active Directory.
 .DESCRIPTION
     This script prompts the user for a username and looks up the corresponding badge number stored in the `extensionAttribute3` attribute of the user's Active Directory account. 
-    It handles errors gracefully, providing feedback if the user is not found or if there are other issues with the lookup process.
 .EXAMPLE
     PS C:\> .\Get-BadgeNumber.ps1
     Enter username to find matching badge number: jdoe
@@ -24,6 +23,9 @@
 #Created by Will Hughes
 #Date: 2024-08-07
 #Patch Notes:
+    <#
+    2024-11-20: Removed self-congratulatory message disguised as information added by AI-generated description.
+    #>
 
 #Prompt for the user name
 $userName = Read-Host "Enter username to find matching badge number"
