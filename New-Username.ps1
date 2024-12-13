@@ -8,8 +8,6 @@
 .EXAMPLE
     Generate-Username
     # Prompts for input and generates a username based on the specified logic.
-.EXAMPLE
-    Generate-Username
     # For first name "Bruce" and last name "Wayne", returns "bruwayne".
 #>
 
