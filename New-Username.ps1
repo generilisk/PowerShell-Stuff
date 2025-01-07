@@ -21,7 +21,9 @@ function New-Username {
     $firstName = Read-Host "Enter the first name"
     $lastName = Read-Host "Enter the last name"
     $firstName = $firstName.ToLower()
+    $firstName = $firstName -replace '\s', ''
     $lastName = $lastName.ToLower()
+    $lastName = $lastName -replace '\s', ''
 
     switch($lastName){
         {$_.Length -gt 6} {
