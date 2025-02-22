@@ -67,4 +67,4 @@ $groupsOnlyUser2 | ForEach-Object {
     Write-Host $_.InputObject
 }
 
-Read-Host -Prompt "`nPress any key to continue..."
+Read-Host -Prompt "`nPress enter to continue..."
