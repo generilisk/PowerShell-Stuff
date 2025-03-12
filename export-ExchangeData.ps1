@@ -59,14 +59,6 @@ if ($confirmation -ne 'y' -and $confirmation -ne 'Y') {
 # If confirmed, continue with offboard operations
 Write-Host "Continuing with offboard operations for $accountName..."
 
-
-<# This does not support MFA
-# Prompt for credentials
-$credentials = Get-Credential
-# Connect to Exchange Online using the credential object
-Connect-ExchangeOnline -Credential $credentials -ShowProgress $true
-#>
-
 # Connect to Exchange Online for mailbox-related tasks
 Connect-ExchangeOnline
 
