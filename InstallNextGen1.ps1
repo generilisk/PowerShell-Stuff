@@ -3,9 +3,10 @@ Start-Process -FilePath "\\shastahealth.org\shared\ITS\Store\Software\ODBC\17\VC
 
 # Step 2: Install Sqlnclix64.msi -> Redo this one
 # Define the argument list in a variable
-    $msiPath = "\\shastahealth.org\shared\ITS\Store\Software\ODBC\17\Sqlnclix64.msi"
-    $arguments = "/i `"$msiPath`" /qn"
-    Start-Process -FilePath "msiexec.exe" -ArgumentList $arguments -Wait
+    #$msiPath = "\\shastahealth.org\shared\ITS\Store\Software\ODBC\17\Sqlnclix64.msi"
+    #$arguments = "/i `"$msiPath`" /qn IACCEPTSQLNCLILICENSETERMS=YES"
+    #Start-Process -FilePath "msiexec.exe" -ArgumentList $arguments -Wait
+    Start-Process -FilePath "msiexec.exe" -ArgumentList '/i "\\shastahealth.org\shared\ITS\Store\Software\ODBC\17\Sqlnclix64.msi" /qn IACCEPTSQLNCLILICENSETERMS=YES' -Wait -NoNewWindow
 
 
 # Step 3: Run Create_ODBC.exe from Prod folder
@@ -43,27 +44,6 @@ Copy-Item "\\ngroot\NextGenRoot\NGUtilitiesConfig\Prod\NGConfig.ini" "C:\Windows
     # Apply the modified ACL to the file
     Set-Acl -Path "C:\Windows\NGConfig.ini" -AclObject $acl
 
-# Step 8: Install vcredist_x64.exe as admin
-Start-Process -FilePath "\\shastahealth.org\shared\ITS\Store\Software\NextGen\Prereqs\vcredist_2005\vcredist_x64.exe" -ArgumentList "/q" -Verb RunAs -Wait
-
-# Step 9: Install vcredist_x86.exe as admin
-Start-Process -FilePath "\\shastahealth.org\shared\ITS\Store\Software\NextGen\Prereqs\vcredist_2005\vcredist_x86.exe" -ArgumentList "/q" -Verb RunAs -Wait
-
-# Step 10: Enable MSMQ-Container feature
-Dism /online /Enable-Feature /FeatureName:MSMQ-Container
-
-# Step 11: Enable MSMQ-ADIntegration feature
-Dism /online /Enable-Feature /FeatureName:MSMQ-ADIntegration
-
-# Step 12: Enable NetFx3 feature
-Dism /online /Enable-Feature /FeatureName:NetFx3
-
-# Step 13: Add NetFx3 capability from source
-#DISM /Online /Add-Capability /CapabilityName:NetFx3~~~~ /Source:"\\Rdmps02\sources\os\win10 x64 ent\sources\sxs"
-
-# Step 14: Add NetFx3 capability from source
-#Add-WindowsCapability -Online -Name NetFx3~~~~ -Source "\\Rdmps02\sources\os\zWin10DOTNET"
-
 # Step 15: Copy EDR Files
 $sourcePathEDR = "\\ngroot\NextGenRoot\Prod\EDR"
 $destinationPathEDR = "C:\Nextgen"
@@ -83,10 +63,10 @@ robocopy $sourcePathEHR $destinationPathEHR /E
 $scriptPathFont = "\\shastahealth.org\shared\ITS\Store\Software\NextGen\scripts\NGFont\install_font.ps1"
 Start-Process -FilePath "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList "-executionpolicy bypass -File `"$scriptPathFont`"" -Verb RunAs
 
+# Step 20: Run setup.exe as admin
+Start-Process -FilePath "\\ngroot\NextGenRoot\Install\Install\NextGen Setup\setup.exe" -Verb RunAs
+
 # Step 19: Copy Nextgen Shortcut
 $sourcePathShortcut = "\\shastahealth.org\shared\ITS\Store\Software\Shortcuts\NextGen 5.lnk"
 $destinationPathShortcut = "C:\Users\Public\Desktop"
 Copy-Item -Path $sourcePathShortcut -Destination $destinationPathShortcut
-
-# Step 20: Run setup.exe as admin
-Start-Process -FilePath "\\ngroot\NextGenRoot\Install\Install\NextGen Setup\setup.exe" -Verb RunAs
