@@ -83,7 +83,7 @@ while ($status.Status -ne "Completed") {
 
 # Once the search is completed, export the search results
 Write-Host "Search completed! Proceeding with export..."
-New-ComplianceSearchAction -SearchName $searchName -Export -ExchangeArchiveFormat SingleFolderPst
+New-ComplianceSearchAction -SearchName $searchName -Export -ExchangeArchiveFormat SingleFolderPst -Format FxStream
 
 # Disconnect from Exchange Online
 Disconnect-ExchangeOnline -Confirm:$false
