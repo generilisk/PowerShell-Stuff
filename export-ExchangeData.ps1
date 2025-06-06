@@ -28,7 +28,7 @@ Import-Module ExchangeOnlineManagement
 
 # Check if $accountName was provided
 if (-not $accountName) {
-    throw "Username is required."
+    throw "accountName is required."
 }
 
 # Retrieve the AD user and display the DisplayName and mail
