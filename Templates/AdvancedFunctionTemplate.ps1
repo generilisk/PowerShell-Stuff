@@ -23,7 +23,8 @@ function New-AdvancedFunction{
 
     [CmdletBinding()]
     param (
-        [string]$Param1
+        [string]$Param1,
+        [string]$Param2
     )
     process {
         try {
