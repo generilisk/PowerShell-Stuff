@@ -1,8 +1,24 @@
-﻿# Prompt for the source username
-$sourceUser = Read-Host "Enter the source username (groups will be copied FROM this user)"
+param(
+    [string]$SourceUser,
+    [string]$TargetUser
+)
 
-# Prompt for the target username
-$targetUser = Read-Host "Enter the target username (groups will be copied TO this user)"
+# Helper function to get username if missing
+function Get-UsernameIfMissing {
+    param(
+        [string]$username,
+        [string]$prompt
+    )
+    
+    if ([string]::IsNullOrEmpty($username)) {
+        $username = Read-Host -Prompt $prompt
+    }
+    return $username
+}
+
+# Get usernames using helper function
+$sourceUser = Get-UsernameIfMissing -username $SourceUser -prompt "Enter the source username (groups will be copied FROM this user)"
+$targetUser = Get-UsernameIfMissing -username $TargetUser -prompt "Enter the target username (groups will be copied TO this user)"
 
 # Get AD group memberships for the source user
 $groupsSourceUser = Get-ADPrincipalGroupMembership -Identity $sourceUser
