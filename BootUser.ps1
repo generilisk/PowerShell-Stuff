@@ -86,3 +86,4 @@ $sessionData = $sessionData | Sort-Object -Property Username
 
 # Show the form
 $result = $form.ShowDialog()
+Write-Host $result
