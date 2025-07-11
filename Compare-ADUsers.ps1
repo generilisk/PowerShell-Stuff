@@ -72,6 +72,7 @@ function Get-ValidatedUsername {
         
         try {
             $user = Get-ADUser -Identity $username -ErrorAction Stop
+            "$user" | Out-Null
             return $username
         }
         catch {
