@@ -1,5 +1,11 @@
+[CmdletBinding()]
 param(
+    [Parameter(Mandatory=$false)]
+    [ValidateNotNullOrEmpty()]
     [string]$SourceUser,
+    
+    [Parameter(Mandatory=$false)]
+    [ValidateNotNullOrEmpty()]
     [string]$TargetUser
 )
 
