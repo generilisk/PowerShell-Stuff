@@ -22,3 +22,4 @@ function addServersFromCollectionToArray([string]$connectionBroker) {
 foreach ($broker in $brokerArray) {
     addServersFromCollectionToArray $broker
 }
+Write-Host $fullServerArrray
