@@ -30,7 +30,7 @@
 .AUTHOR
     Will Hughes
 .VERSION
-    1.1
+    1.2
 #>
 
 [CmdletBinding()]
@@ -44,41 +44,35 @@ param (
     [string]$User2
 )
 
-# Function to get user input if missing
-function Get-UsernameIfMissing {
-    param(
-        [string]$username,
-        [string]$prompt
-    )
-    
-    if ([string]::IsNullOrEmpty($username)) {
-        $username = Read-Host -Prompt $prompt
-    }
-    return $username
-}
-
 # Function to get user input with validation
 function Get-ValidatedUsername {
     param(
-        [string]$PromptText
+        [string]$username,
+        [string]$promptText
     )
     
     do {
-        $username = Read-Host $PromptText
+        # If username is provided as a parameter, use it. Otherwise, prompt.
+        if ([string]::IsNullOrEmpty($username)) {
+            $username = Read-Host $promptText
+        }
+        
         if ([string]::IsNullOrWhiteSpace($username)) {
             Write-Host "Username cannot be empty. Please try again." -ForegroundColor Red
+            $username = $null # Reset to prompt again
             continue
         }
         
         try {
+            # Try to get the user; if it fails, the catch block will handle it.
             $user = Get-ADUser -Identity $username -ErrorAction Stop
-            "$user" | Out-Null
-            return $username
+            return $user.SamAccountName
         }
         catch {
             Write-Host "User '$username' not found in Active Directory. Please try again." -ForegroundColor Red
+            $username = $null # Reset to prompt again
         }
-    } while ($true)
+    } while ([string]::IsNullOrEmpty($username))
 }
 
 # Function to format user information for display
@@ -88,23 +82,23 @@ function Format-UserInfo {
         [string]$UserLabel
     )
     
-    Write-Host "`n=== $UserLabel ===" -ForegroundColor Cyan
-    Write-Host "Username: $($User.SamAccountName)"
-    Write-Host "Display Name: $($User.DisplayName)"
-    Write-Host "Email: $($User.EmailAddress)"
-    Write-Host "Enabled: $($User.Enabled)"
-    Write-Host "Distinguished Name: $($User.DistinguishedName)"
-    Write-Host "Department: $($User.Department)"
-    Write-Host "Title: $($User.Title)"
-    Write-Host "Manager: $($User.Manager)"
-    Write-Host "Office: $($User.Office)"
-    Write-Host "Phone: $($User.OfficePhone)"
-    Write-Host "Last Logon: $($User.LastLogonDate)"
-    Write-Host "Password Last Set: $($User.PasswordLastSet)"
-    Write-Host "Password Never Expires: $($User.PasswordNeverExpires)"
-    Write-Host "Account Locked: $($User.LockedOut)"
-    Write-Host "Created: $($User.WhenCreated)"
-    Write-Host "Modified: $($User.WhenChanged)"
+    Write-Output "`n=== $UserLabel ==="
+    Write-Output "Username: $($User.SamAccountName)"
+    Write-Output "Display Name: $($User.DisplayName)"
+    Write-Output "Email: $($User.EmailAddress)"
+    Write-Output "Enabled: $($User.Enabled)"
+    Write-Output "Distinguished Name: $($User.DistinguishedName)"
+    Write-Output "Department: $($User.Department)"
+    Write-Output "Title: $($User.Title)"
+    Write-Output "Manager: $($User.Manager)"
+    Write-Output "Office: $($User.Office)"
+    Write-Output "Phone: $($User.OfficePhone)"
+    Write-Output "Last Logon: $($User.LastLogonDate)"
+    Write-Output "Password Last Set: $($User.PasswordLastSet)"
+    Write-Output "Password Never Expires: $($User.PasswordNeverExpires)"
+    Write-Output "Account Locked: $($User.LockedOut)"
+    Write-Output "Created: $($User.WhenCreated)"
+    Write-Output "Modified: $($User.WhenChanged)"
 }
 
 # Function to compare user attributes
@@ -116,7 +110,7 @@ function Compare-UserAttributes {
         [string]$User2Name
     )
     
-    Write-Host "`n=== ATTRIBUTE COMPARISON ===" -ForegroundColor Yellow
+    Write-Output "`n=== ATTRIBUTE COMPARISON ==="
     
     $attributes = @(
         'DisplayName', 'EmailAddress', 'Enabled', 'Department', 'Title', 'Manager',
@@ -139,9 +133,9 @@ function Compare-UserAttributes {
     }
     
     if ($differences.Count -eq 0) {
-        Write-Host "No differences found in compared attributes." -ForegroundColor Green
+        Write-Output "No differences found in compared attributes."
     } else {
-        Write-Host "Differences found:" -ForegroundColor Red
+        Write-Output "Differences found:"
         $differences | Format-Table -AutoSize
     }
 }
@@ -155,7 +149,7 @@ function Compare-GroupMemberships {
         [string]$User2Name
     )
     
-    Write-Host "`n=== GROUP MEMBERSHIP COMPARISON ===" -ForegroundColor Yellow
+    Write-Output "`n=== GROUP MEMBERSHIP COMPARISON ==="
     
     # Get group memberships
     $groups1 = Get-ADPrincipalGroupMembership -Identity $Username1 | Select-Object -ExpandProperty Name | Sort-Object
@@ -166,27 +160,29 @@ function Compare-GroupMemberships {
     $onlyInUser2 = $groups2 | Where-Object { $_ -notin $groups1 }
     $common = $groups1 | Where-Object { $_ -in $groups2 }
     
-    Write-Host "`nGroups only in $User1Name ($($onlyInUser1.Count)):" -ForegroundColor Red
+    Write-Output "`nGroups only in $User1Name ($($onlyInUser1.Count)):"
     if ($onlyInUser1.Count -gt 0) {
-        $onlyInUser1 | ForEach-Object { Write-Host "  - $_" }
+        $onlyInUser1 | ForEach-Object { Write-Output "  - $_" }
     } else {
-        Write-Host "  None"
+        Write-Output "  None"
     }
     
-    Write-Host "`nGroups only in $User2Name ($($onlyInUser2.Count)):" -ForegroundColor Red
+    Write-Output "`nGroups only in $User2Name ($($onlyInUser2.Count)):"
     if ($onlyInUser2.Count -gt 0) {
-        $onlyInUser2 | ForEach-Object { Write-Host "  - $_" }
+        $onlyInUser2 | ForEach-Object { Write-Output "  - $_" }
     } else {
-        Write-Host "  None"
+        Write-Output "  None"
     }
     
-    Write-Host "`nCommon groups ($($common.Count)):" -ForegroundColor Green
+    Write-Output "`nCommon groups ($($common.Count)):"
     if ($common.Count -gt 0) {
-        $common | ForEach-Object { Write-Host "  - $_" }
+        $common | ForEach-Object { Write-Output "  - $_" }
     } else {
-        Write-Host "  None"
+        Write-Output "  None"
     }
 }
+
+Clear-Host
 
 # Main script execution
 try {
@@ -199,50 +195,47 @@ try {
     
     Write-Host "=== Active Directory User Comparison Tool ===" -ForegroundColor Green
     Write-Host "This tool will compare two AD user accounts and highlight differences.`n"
-    
-# Get usernames using helper function
-    $User1 = Get-UsernameIfMissing -username $User1 -prompt "Enter the first username"
-    $User2 = Get-UsernameIfMissing -username $User2 -prompt "Enter the second username"
 
-    if ($User1 -eq $User2) {
+    # Get and validate usernames using the single, merged function
+    $username1 = Get-ValidatedUsername -username $User1 -prompt "Enter the first username"
+    $username2 = Get-ValidatedUsername -username $User2 -prompt "Enter the second username"
+
+    if ($username1 -eq $username2) {
         Write-Host "Both usernames are the same. Please run the script again with different usernames." -ForegroundColor Yellow
         exit
     }
     
-    # Get detailed user information
+    # Get detailed user information with required properties
     Write-Host "`nRetrieving user information..." -ForegroundColor Yellow
     
-    $user1 = Get-ADUser -Identity $User1 -Properties *
-    $user2 = Get-ADUser -Identity $User2 -Properties *
+    $requiredProperties = @(
+        'DisplayName', 'EmailAddress', 'Enabled', 'Department', 'Title', 'Manager',
+        'Office', 'OfficePhone', 'PasswordNeverExpires', 'LockedOut', 'LastLogonDate',
+        'PasswordLastSet', 'WhenCreated', 'WhenChanged'
+    )
+
+    $user1 = Get-ADUser -Identity $username1 -Properties $requiredProperties
+    $user2 = Get-ADUser -Identity $username2 -Properties $requiredProperties
     
-    # Display user information
-    Format-UserInfo -User $user1 -UserLabel "USER 1: $User1"
-    Format-UserInfo -User $user2 -UserLabel "USER 2: $User2"
+    # Store the output in a variable
+    $scriptOutput = New-Object -TypeName System.Text.StringBuilder
+    $scriptOutput.Append((Format-UserInfo -User $user1 -UserLabel "USER 1: $($user1.SamAccountName)" | Out-String)) | Out-Null
+    $scriptOutput.Append((Format-UserInfo -User $user2 -UserLabel "USER 2: $($user2.SamAccountName)" | Out-String)) | Out-Null
+    $scriptOutput.Append((Compare-UserAttributes -User1 $user1 -User2 $user2 -User1Name $($user1.SamAccountName) -User2Name $($user2.SamAccountName) | Out-String)) | Out-Null
+    $scriptOutput.Append((Compare-GroupMemberships -Username1 $user1.SamAccountName -Username2 $user2.SamAccountName -User1Name $($user1.SamAccountName) -User2Name $($user2.SamAccountName) | Out-String)) | Out-Null
     
-    # Compare attributes
-    Compare-UserAttributes -User1 $user1 -User2 $user2 -User1Name $User1 -User2Name $User2
-    
-    # Compare group memberships
-    Compare-GroupMemberships -Username1 $User1 -Username2 $User2 -User1Name $User1 -User2Name $User2
+    # Display the final output to the console
+    Write-Host $scriptOutput.ToString()
     
     Write-Host "`n=== COMPARISON COMPLETE ===" -ForegroundColor Green
-    
     
     # Option to export results
     $export = Read-Host "`nWould you like to export the comparison results to a file? (y/n)"
     if ($export -eq 'y' -or $export -eq 'Y') {
         $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-        $filename = "ADUserComparison_${User1}_vs_${User2}_${timestamp}.txt"
+        $filename = "ADUserComparison_${user1.SamAccountName}_vs_${user2.SamAccountName}_${timestamp}.txt"
         
-        # Redirect output to file
-        $scriptBlock = {
-            Format-UserInfo -User $user1 -UserLabel "USER 1: $User1"
-            Format-UserInfo -User $user2 -UserLabel "USER 2: $User2"
-            Compare-UserAttributes -User1 $user1 -User2 $user2 -User1Name $User1 -User2Name $User2
-            Compare-GroupMemberships -Username1 $User1 -Username2 $User2 -User1Name $User1 -User2Name $User2
-        }
-        
-        & $scriptBlock | Out-File -FilePath $filename -Encoding UTF8
+        $scriptOutput.ToString() | Out-File -FilePath $filename -Encoding UTF8
         Write-Host "Results exported to: $filename" -ForegroundColor Green
     }
     
@@ -251,6 +244,6 @@ try {
     Write-Host "Please ensure you have the necessary permissions to query Active Directory." -ForegroundColor Yellow
 }
 
-# Pause to allow user to review results
-Write-Host "`nPress any key to continue..." -ForegroundColor Gray
-$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+# Pause to allow user to review results using a more compatible method
+Write-Host "`nPress Enter to continue..." -ForegroundColor Gray
+$null = Read-Host
