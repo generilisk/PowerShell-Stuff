@@ -33,7 +33,8 @@ if (-not $accountName) {
 
 # Retrieve the AD user and display the DisplayName and mail
 try {
-    $adUser = Get-ADUser -Identity $accountName -Properties DisplayName, Mail
+    $adUser = Get-ADUser -Identity $accountName -Properties DisplayName, Mail, GivenName, Surname
+    $fullName = "$($adUser.Surname), $($adUser.GivenName)"
     $adMail = $adUser.Mail
 																   
     if ($adUser) {
@@ -67,7 +68,7 @@ Connect-IPPSSession
 
 # Create a content search
 $searchName = $accountName
-$description = "Off-boarding for $($adUser.DisplayName)"
+$description = "Offboarding for $fullName"
 New-ComplianceSearch -Name $searchName -ExchangeLocation $adMail -Description $description
 
 # Start the content search
