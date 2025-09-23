@@ -18,19 +18,15 @@
 .EXAMPLE
     .\Compare-ADUsers.ps1
     
-    Interactive mode - script prompts for both usernames:
-    This example runs the script without parameters, prompting the user to enter two usernames interactively.
-    The script will ask for the first username, then the second username, and perform the comparison.
+    Interactive mode - script prompts for both usernames.
 .EXAMPLE
     .\Compare-ADUsers.ps1 -User1 peparker -User2 clarkent
     
-    Non-interactive mode - direct parameter usage:
-    This example compares the Active Directory accounts for users 'peparker' and 'clarkent' without prompting for input.
-    The script will retrieve both user accounts and display their differences in attributes and group memberships.
+    Non-interactive mode - direct parameter usage.
 .AUTHOR
     Will Hughes
 .VERSION
-    1.2
+    1.3
 #>
 
 [CmdletBinding()]
@@ -52,27 +48,28 @@ function Get-ValidatedUsername {
     )
     
     do {
-        # If username is provided as a parameter, use it. Otherwise, prompt.
-        if ([string]::IsNullOrEmpty($username)) {
+        if ([string]::IsNullOrWhiteSpace($username)) {
             $username = Read-Host $promptText
         }
-        
+
         if ([string]::IsNullOrWhiteSpace($username)) {
             Write-Host "Username cannot be empty. Please try again." -ForegroundColor Red
-            $username = $null # Reset to prompt again
+            $username = $null
             continue
         }
-        
+
         try {
-            # Try to get the user; if it fails, the catch block will handle it.
             $user = Get-ADUser -Identity $username -ErrorAction Stop
-            return $user.SamAccountName
+            if (-not $user) {
+                throw "No AD user object returned for '$username'."
+            }
+            return $user  # return the full AD user object
         }
         catch {
             Write-Host "User '$username' not found in Active Directory. Please try again." -ForegroundColor Red
-            $username = $null # Reset to prompt again
+            $username = $null
         }
-    } while ([string]::IsNullOrEmpty($username))
+    } while (-not $user)
 }
 
 # Function to format user information for display
@@ -143,19 +140,17 @@ function Compare-UserAttributes {
 # Function to compare group memberships
 function Compare-GroupMemberships {
     param(
-        [string]$Username1,
-        [string]$Username2,
+        [Microsoft.ActiveDirectory.Management.ADUser]$User1,
+        [Microsoft.ActiveDirectory.Management.ADUser]$User2,
         [string]$User1Name,
         [string]$User2Name
     )
     
     Write-Output "`n=== GROUP MEMBERSHIP COMPARISON ==="
     
-    # Get group memberships
-    $groups1 = Get-ADPrincipalGroupMembership -Identity $Username1 | Select-Object -ExpandProperty Name | Sort-Object
-    $groups2 = Get-ADPrincipalGroupMembership -Identity $Username2 | Select-Object -ExpandProperty Name | Sort-Object
+    $groups1 = Get-ADPrincipalGroupMembership -Identity $User1 | Select-Object -ExpandProperty Name | Sort-Object
+    $groups2 = Get-ADPrincipalGroupMembership -Identity $User2 | Select-Object -ExpandProperty Name | Sort-Object
     
-    # Find unique groups
     $onlyInUser1 = $groups1 | Where-Object { $_ -notin $groups2 }
     $onlyInUser2 = $groups2 | Where-Object { $_ -notin $groups1 }
     $common = $groups1 | Where-Object { $_ -in $groups2 }
@@ -186,7 +181,6 @@ Clear-Host
 
 # Main script execution
 try {
-    # Check if Active Directory module is available
     if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
         throw "Active Directory PowerShell module is not installed. Please install RSAT tools."
     }
@@ -196,44 +190,44 @@ try {
     Write-Host "=== Active Directory User Comparison Tool ===" -ForegroundColor Green
     Write-Host "This tool will compare two AD user accounts and highlight differences.`n"
 
-    # Get and validate usernames using the single, merged function
-    $username1 = Get-ValidatedUsername -username $User1 -prompt "Enter the first username"
-    $username2 = Get-ValidatedUsername -username $User2 -prompt "Enter the second username"
+    # Get and validate user accounts
+    $user1 = Get-ValidatedUsername -username $User1 -prompt "Enter the first username"
+    $user2 = Get-ValidatedUsername -username $User2 -prompt "Enter the second username"
 
-    if ($username1 -eq $username2) {
+    if (-not $user1 -or -not $user2) {
+        throw "One or both users could not be validated. Exiting."
+    }
+
+    if ($user1.SamAccountName -eq $user2.SamAccountName) {
         Write-Host "Both usernames are the same. Please run the script again with different usernames." -ForegroundColor Yellow
         exit
     }
     
-    # Get detailed user information with required properties
     Write-Host "`nRetrieving user information..." -ForegroundColor Yellow
     
     $requiredProperties = @(
-        'DisplayName', 'EmailAddress', 'Enabled', 'Department', 'Title', 'Manager',
-        'Office', 'OfficePhone', 'PasswordNeverExpires', 'LockedOut', 'LastLogonDate',
-        'PasswordLastSet', 'WhenCreated', 'WhenChanged'
+        'DisplayName','EmailAddress','Enabled','Department','Title','Manager',
+        'Office','OfficePhone','PasswordNeverExpires','LockedOut','LastLogonDate',
+        'PasswordLastSet','WhenCreated','WhenChanged'
     )
 
-    $user1 = Get-ADUser -Identity $username1 -Properties $requiredProperties
-    $user2 = Get-ADUser -Identity $username2 -Properties $requiredProperties
+    $user1 = Get-ADUser -Identity $user1.DistinguishedName -Properties $requiredProperties
+    $user2 = Get-ADUser -Identity $user2.DistinguishedName -Properties $requiredProperties
     
-    # Store the output in a variable
     $scriptOutput = New-Object -TypeName System.Text.StringBuilder
     $scriptOutput.Append((Format-UserInfo -User $user1 -UserLabel "USER 1: $($user1.SamAccountName)" | Out-String)) | Out-Null
     $scriptOutput.Append((Format-UserInfo -User $user2 -UserLabel "USER 2: $($user2.SamAccountName)" | Out-String)) | Out-Null
     $scriptOutput.Append((Compare-UserAttributes -User1 $user1 -User2 $user2 -User1Name $($user1.SamAccountName) -User2Name $($user2.SamAccountName) | Out-String)) | Out-Null
-    $scriptOutput.Append((Compare-GroupMemberships -Username1 $user1.SamAccountName -Username2 $user2.SamAccountName -User1Name $($user1.SamAccountName) -User2Name $($user2.SamAccountName) | Out-String)) | Out-Null
+    $scriptOutput.Append((Compare-GroupMemberships -User1 $user1 -User2 $user2 -User1Name $($user1.SamAccountName) -User2Name $($user2.SamAccountName) | Out-String)) | Out-Null
     
-    # Display the final output to the console
     Write-Host $scriptOutput.ToString()
     
     Write-Host "`n=== COMPARISON COMPLETE ===" -ForegroundColor Green
     
-    # Option to export results
     $export = Read-Host "`nWould you like to export the comparison results to a file? (y/n)"
     if ($export -eq 'y' -or $export -eq 'Y') {
         $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-        $filename = "ADUserComparison_${user1.SamAccountName}_vs_${user2.SamAccountName}_${timestamp}.txt"
+        $filename = "ADUserComparison_${($user1.SamAccountName)}_vs_${($user2.SamAccountName)}_${timestamp}.txt"
         
         $scriptOutput.ToString() | Out-File -FilePath $filename -Encoding UTF8
         Write-Host "Results exported to: $filename" -ForegroundColor Green
@@ -244,6 +238,5 @@ try {
     Write-Host "Please ensure you have the necessary permissions to query Active Directory." -ForegroundColor Yellow
 }
 
-# Pause to allow user to review results using a more compatible method
 Write-Host "`nPress Enter to continue..." -ForegroundColor Gray
 $null = Read-Host
