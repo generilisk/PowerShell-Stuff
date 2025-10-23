@@ -235,6 +235,7 @@ if (-not (Test-NetworkPath -Path $hrFolderRoot -LogPath $logPath)) {
 
 Add-Content $logPath "[SUCCESS] All network paths validated successfully"
 Write-Host "[SUCCESS] Network path validation completed" -ForegroundColor Green
+Write-Host "Log available after completion at $logPath" -ForegroundColor Green
 
 # === SET PERMISSIONS ===
 Write-Host "`n=== SETTING PERMISSIONS ==="  -ForegroundColor Cyan
