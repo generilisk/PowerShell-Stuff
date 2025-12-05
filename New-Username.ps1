@@ -34,53 +34,57 @@
 # Script Name: New-Username
 # Created by Will Hughes
 # Date: 2024-10-31
-# Updated: 2025-01-09
+# Updated: 2025-12-05
 # Patch Notes: 
-# - Added Active Directory integration with Get-ADUser validation
-# - Implemented smart collision handling (letters before numbers)
-# - Added comprehensive input validation
-# - Improved output formatting with original name display
-# - Added color-coded status messages for better UX
+# - Added script-level parameters for direct execution support
+# - Restored interactive prompting with hybrid automation support
+# - Optimized AD checks using Filter instead of Try/Catch
+# - Standardized output to console with color coding
+# - Improved AD validation and collision handling logic
 
-# Check if Active Directory module is available
-if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
-    Write-Error "Active Directory module is not installed. Please install RSAT tools or run this on a domain controller."
-    return
-}
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory=$false, Position=0)]
+    [string]$FirstName,
+    
+    [Parameter(Mandatory=$false, Position=1)]
+    [string]$LastName
+)
 
-# Import Active Directory module
-try {
-    Import-Module ActiveDirectory -ErrorAction Stop
-    Write-Host "Active Directory module loaded successfully" -ForegroundColor Green
-}
-catch {
-    Write-Error "Failed to import Active Directory module: $($_.Exception.Message)"
-    return
-}
+#Requires -Modules ActiveDirectory
+
+<# # Check if Active Directory module is available (Redundant with #Requires but good for explicit error message if script is run in ISE/VSCode without analyzing prerequisites)
+# However, #Requires is the standard way. #>
+
+# Import Active Directory module not strictly needed if we rely on autoloading or #Requires, 
+# but explicitness handles edge cases where autoload fails or errors are needed.
+# Since we are optimizing, we will rely on #Requires and autoloading.
+
 
 function Test-ADUsername {
+    [CmdletBinding()]
     param(
+        [Parameter(Mandatory=$true)]
         [string]$Username
     )
     
-    try {
-        # Check if the username exists in Active Directory
-        $adUser = Get-ADUser -Identity $Username -ErrorAction Stop
-        if($adUser=$adUser){} #this line is to hide the "$adUser not used" error; it isn't functional in prod.
-        return $true  # Username exists
-    }
-    catch {
-        return $false  # Username doesn't exist
-    }
+    # Use Filter instead of try/catch for better performance
+    $adUser = Get-ADUser -Filter "SamAccountName -eq '$Username'" -ErrorAction SilentlyContinue
+    return [bool]$adUser
 }
 
 function Get-UniqueUsername {
+    [CmdletBinding()]
     param(
+        [Parameter(Mandatory=$true)]
         [string]$BaseUsername,
+        [Parameter(Mandatory=$true)]
         [string]$FirstName,
+        [Parameter(Mandatory=$true)]
         [string]$LastName
     )
     
+
     # First, check if the base username is available
     if (-not (Test-ADUsername -Username $BaseUsername)) {
         Write-Host "Username '$BaseUsername' is available" -ForegroundColor Green
@@ -129,61 +133,68 @@ function Get-UniqueUsername {
 }
 
 function New-Username {
-    # Prompt for first and last names
-    $firstName = Read-Host "Enter the first name"
-    $lastName = Read-Host "Enter the last name"
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$false, Position=0)]
+        [string]$FirstName,
+        
+        [Parameter(Mandatory=$false, Position=1)]
+        [string]$LastName
+    )
     
-    # Validate input - check for empty or whitespace-only strings
-    if ([string]::IsNullOrWhiteSpace($firstName)) {
-        Write-Error "First name cannot be empty or contain only whitespace"
-        return
+    # Interactive fallback: Prompt if parameters are missing
+    if ([string]::IsNullOrWhiteSpace($FirstName)) {
+        $FirstName = Read-Host "Enter the first name"
     }
     
-    if ([string]::IsNullOrWhiteSpace($lastName)) {
-        Write-Error "Last name cannot be empty or contain only whitespace"
-        return
+    if ([string]::IsNullOrWhiteSpace($LastName)) {
+        $LastName = Read-Host "Enter the last name"
     }
     
     # Store original names for display purposes
-    $originalFirstName = $firstName.Trim()
-    $originalLastName = $lastName.Trim()
+    $originalFirstName = $FirstName.Trim()
+    $originalLastName = $LastName.Trim()
     
     # Clean and normalize the names for processing
-    $firstName = $firstName.ToLower()
-    $firstName = $firstName -replace '\s', ''
-    $lastName = $lastName.ToLower()
-    $lastName = $lastName -replace '\s', ''
+    $FirstName = $FirstName.ToLower() -replace '\s', ''
+    $LastName = $LastName.ToLower() -replace '\s', ''
     
     # Additional validation after cleaning - ensure they're not empty after removing spaces
-    if ([string]::IsNullOrEmpty($firstName)) {
+    if ([string]::IsNullOrEmpty($FirstName)) {
         Write-Error "First name cannot be empty after removing spaces"
         return
     }
     
-    if ([string]::IsNullOrEmpty($lastName)) {
+    if ([string]::IsNullOrEmpty($LastName)) {
         Write-Error "Last name cannot be empty after removing spaces"
         return
     }
 
-    switch($lastName){
+    switch($LastName){
         {$_.Length -gt 6} {
-            $username = ($firstName.Substring(0,1) + $lastName)
+            $username = ($FirstName.Substring(0,1) + $LastName)
         }
-        {$_.Length + $firstName.Length -le 8} {
-            $username = ($firstName + $lastName)
+        {$_.Length + $FirstName.Length -le 8} {
+            $username = ($FirstName + $LastName)
         }
-        {($_.Length -lt 7) -and ($_.Length + $firstName.Length -gt 8)} {
-            $trimLength = (8 - $lastName.Length)
-            $firstNameTrimmed = $firstName.Substring(0,$trimLength)
-            $username = $firstNameTrimmed  + $lastName
+        {($_.Length -lt 7) -and ($_.Length + $FirstName.Length -gt 8)} {
+            $trimLength = (8 - $LastName.Length)
+            $firstNameTrimmed = $FirstName.Substring(0,$trimLength)
+            $username = $firstNameTrimmed  + $LastName
         }
     }
     
     # Check if username exists in Active Directory and handle collisions
-    $finalUsername = Get-UniqueUsername -BaseUsername $username -FirstName $firstName -LastName $lastName
+    $finalUsername = Get-UniqueUsername -BaseUsername $username -FirstName $FirstName -LastName $LastName
     
-    Write-Output "Generated username for ${originalLastName}, ${originalFirstName}: $finalUsername"
+    # Return the object (best practice) but also print the success message as requested
+    
+    Write-Host "Generated username for ${originalLastName}, ${originalFirstName}: $finalUsername" -ForegroundColor Cyan
+    return $finalUsername
 }
 
-# Run the function
-New-Username
+
+# Run the function if script is executed directly (not dot-sourced)
+if ($MyInvocation.InvocationName -ne '.') {
+    New-Username -FirstName $FirstName -LastName $LastName
+}
