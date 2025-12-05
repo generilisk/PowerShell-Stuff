@@ -145,7 +145,9 @@ Write-Host "Account name: $accountName" -ForegroundColor Green
 # === SETUP BASIC PATHS FOR LOGGING ===
 $hrFolderRoot = "\\shared01\hr\_HR Shared\TERMINATION\Termed employee files"
 $hrUserFolder = Join-Path $hrFolderRoot $username
-$logPath = Join-Path $hrUserFolder "Termed Script.log"
+$timestamp = (Get-Date).ToString("yyyy-MM-dd HHmmss")
+$logFileName = "$timestamp Termed Script.log"
+$logPath = Join-Path $hrUserFolder $logFileName
 
 # === VERIFY USERNAME ===
 try {

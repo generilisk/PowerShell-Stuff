@@ -66,6 +66,7 @@ function Test-ADUsername {
     try {
         # Check if the username exists in Active Directory
         $adUser = Get-ADUser -Identity $Username -ErrorAction Stop
+        if($adUser=$adUser){} #this line is to hide the "$adUser not used" error; it isn't functional in prod.
         return $true  # Username exists
     }
     catch {
