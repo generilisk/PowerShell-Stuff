@@ -195,6 +195,4 @@ function New-Username {
 
 
 # Run the function if script is executed directly (not dot-sourced)
-if ($MyInvocation.InvocationName -ne '.') {
-    New-Username -FirstName $FirstName -LastName $LastName
-}
+New-Username -FirstName $FirstName -LastName $LastName
