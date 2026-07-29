@@ -66,7 +66,8 @@ Import-Module ActiveDirectory -ErrorAction Stop
 # Load CSV
 try {
     $users = Import-Csv -Path $Path
-} catch {
+}
+catch {
     Write-Error "Failed to load CSV: $_"
     return
 }
@@ -80,13 +81,13 @@ foreach ($user in $users) {
     }
 
     # Try exact match on DisplayName: First Last
-    $adUser = Get-ADUser -Filter {DisplayName -eq $name} -Properties sAMAccountName
+    $adUser = Get-ADUser -Filter { DisplayName -eq $name } -Properties sAMAccountName
 
     # If no match, try Last, First
     if (-not $adUser -and $name -match '^\S+\s+\S+$') {
         $parts = $name -split '\s+'
         $reversedName = "$($parts[1]), $($parts[0])"
-        $adUser = Get-ADUser -Filter {DisplayName -eq $reversedName} -Properties sAMAccountName
+        $adUser = Get-ADUser -Filter { DisplayName -eq $reversedName } -Properties sAMAccountName
     }
 
     if ($adUser) {
@@ -95,7 +96,7 @@ foreach ($user in $users) {
     }
 
     # Fuzzy match fallback
-    $potentialMatches = Get-ADUser -Filter {DisplayName -like "*$name*"} -Properties DisplayName, sAMAccountName
+    $potentialMatches = Get-ADUser -Filter { DisplayName -like "*$name*" } -Properties DisplayName, sAMAccountName
 
     if ($potentialMatches.Count -eq 0) {
         Write-Host "No Active Directory match found for '$name'."
@@ -123,7 +124,8 @@ foreach ($user in $users) {
     if ($selectedIndex -ge 0 -and $selectedIndex -lt $potentialMatches.Count) {
         $selectedUser = $potentialMatches[$selectedIndex]
         $user.Username = $selectedUser.sAMAccountName
-    } else {
+    }
+    else {
         Write-Host "Invalid choice. Skipped."
         $user.Username = ""
     }

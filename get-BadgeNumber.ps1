@@ -23,7 +23,7 @@
 #Created by Will Hughes
 #Date: 2024-08-07
 #Patch Notes:
-    <#
+<#
     2024-11-20: Removed self-congratulatory message disguised as information added by AI-generated description.
     #>
 

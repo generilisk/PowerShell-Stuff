@@ -34,11 +34,13 @@ try {
     # Check if any devices were found
     if ($devices.Count -eq 0) {
         Write-Output "No devices found matching the pattern '$RegexPattern'."
-    } else {
+    }
+    else {
         # Display matching devices
         Write-Output "Devices matching the pattern '$RegexPattern':"
         $devices | ForEach-Object { Write-Output $_.Name }
     }
-} catch {
+}
+catch {
     Write-Error "An error occurred: $_"
 }

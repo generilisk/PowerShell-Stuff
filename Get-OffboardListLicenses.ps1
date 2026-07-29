@@ -80,8 +80,8 @@ else {
     }
 
     $users = $csvData |
-        Select-Object -ExpandProperty Username |
-        Where-Object { $_ -and $_.Trim() -ne "" }
+    Select-Object -ExpandProperty Username |
+    Where-Object { $_ -and $_.Trim() -ne "" }
 
     if ($users.Count -eq 0) {
         Write-Error "No usernames found in the 'Username' column of $CsvFile."

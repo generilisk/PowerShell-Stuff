@@ -31,11 +31,11 @@
 
 [CmdletBinding()]
 param (
-    [Parameter(Mandatory=$false)]
+    [Parameter(Mandatory = $false)]
     [ValidateNotNullOrEmpty()]
     [string]$User1,
 
-    [Parameter(Mandatory=$false)]
+    [Parameter(Mandatory = $false)]
     [ValidateNotNullOrEmpty()]
     [string]$User2
 )
@@ -44,9 +44,9 @@ param (
 
 # Define the properties needed for comparison to optimize Get-ADUser calls
 $RequiredADProperties = @(
-    'DisplayName','EmailAddress','Enabled','Department','Title','Manager',
-    'Office','OfficePhone','PasswordNeverExpires','LockedOut','LastLogonDate',
-    'PasswordLastSet','WhenCreated','WhenChanged'
+    'DisplayName', 'EmailAddress', 'Enabled', 'Department', 'Title', 'Manager',
+    'Office', 'OfficePhone', 'PasswordNeverExpires', 'LockedOut', 'LastLogonDate',
+    'PasswordLastSet', 'WhenCreated', 'WhenChanged'
 )
 
 # Attributes to compare in the Compare-UserAttributes function
@@ -143,7 +143,7 @@ function Compare-UserAttributes {
         # Note: -ne works correctly for all data types (string, boolean, date)
         if ($value1 -ne $value2) {
             $differences += [PSCustomObject]@{
-                Attribute = $attr
+                Attribute  = $attr
                 $User1Name = $value1
                 $User2Name = $value2
             }
@@ -152,7 +152,8 @@ function Compare-UserAttributes {
 
     if ($differences.Count -eq 0) {
         Write-Output "No differences found in compared attributes."
-    } else {
+    }
+    else {
         Write-Output "Differences found:"
         $differences | Format-Table -AutoSize
     }
@@ -181,21 +182,24 @@ function Compare-GroupMemberships {
     Write-Output "`nGroups only in $User1Name ($($onlyInUser1.Count)):"
     if ($onlyInUser1.Count -gt 0) {
         $onlyInUser1 | ForEach-Object { Write-Output "   - $_" }
-    } else {
+    }
+    else {
         Write-Output "   None"
     }
 
     Write-Output "`nGroups only in $User2Name ($($onlyInUser2.Count)):"
     if ($onlyInUser2.Count -gt 0) {
         $onlyInUser2 | ForEach-Object { Write-Output "   - $_" }
-    } else {
+    }
+    else {
         Write-Output "   None"
     }
 
     Write-Output "`nCommon groups ($($common.Count)):"
     if ($common.Count -gt 0) {
         $common | ForEach-Object { Write-Output "   - $_" }
-    } else {
+    }
+    else {
         Write-Output "   None"
     }
 }
@@ -253,7 +257,8 @@ try {
         Write-Host "Results exported to: $filename" -ForegroundColor Green
     }
 
-} catch {
+}
+catch {
     Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
     Write-Host "Please ensure you have the necessary permissions to query Active Directory." -ForegroundColor Yellow
 }

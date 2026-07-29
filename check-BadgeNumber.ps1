@@ -9,7 +9,8 @@ if ($user) {
     foreach ($u in $user) {
         Write-Host "$badgeNumber belongs to $($u.Name)"
     }
-} else {
+}
+else {
     Write-Host "No user found with the badge number: $badgeNumber"
 }
 Read-Host "Press Enter to continue..."

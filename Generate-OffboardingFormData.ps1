@@ -33,7 +33,7 @@
 
 [CmdletBinding()]
 param (
-    [Parameter(Mandatory=$false)]
+    [Parameter(Mandatory = $false)]
     [ValidateNotNullOrEmpty()]
     [string]$Username
 )
@@ -69,7 +69,8 @@ try {
     Write-Output "${Username}_export"
     Write-Output "Off-boarding Export for $last, $first"
 
-} catch {
+}
+catch {
     Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
     exit 1
 }

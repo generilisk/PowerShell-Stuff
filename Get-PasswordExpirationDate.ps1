@@ -16,7 +16,7 @@
 # Created by Will Hughes
 # Date: 2025.01.30
 # Patch Notes:
-    #2025.01.30 - Completely re-wrote as I thought I'd lost this. I like this version better.
+# 2025.01.30 - Completely re-wrote as I thought I'd lost this. I like this version better.
 
 param (
     [string]$Username
@@ -46,6 +46,7 @@ if ($User."msDS-UserPasswordExpiryTimeComputed") {
     Write-Host "Password Last Set: $PasswordLastSet" -ForegroundColor Yellow
     Write-Host "Password Expires On: $ExpirationDate" -ForegroundColor Magenta
     Write-Host "===================================" -ForegroundColor Cyan
-} else {
+}
+else {
     Write-Host "`nUnable to retrieve password expiration date for user '$Username'." -ForegroundColor Red
 }

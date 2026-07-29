@@ -44,10 +44,10 @@
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory=$false, Position=0)]
+    [Parameter(Mandatory = $false, Position = 0)]
     [string]$FirstName,
     
-    [Parameter(Mandatory=$false, Position=1)]
+    [Parameter(Mandatory = $false, Position = 1)]
     [string]$LastName
 )
 
@@ -64,7 +64,7 @@ param(
 function Test-ADUsername {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
         [string]$Username
     )
     
@@ -76,11 +76,11 @@ function Test-ADUsername {
 function Get-UniqueUsername {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
         [string]$BaseUsername,
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
         [string]$FirstName,
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
         [string]$LastName
     )
     
@@ -135,10 +135,10 @@ function Get-UniqueUsername {
 function New-Username {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory=$false, Position=0)]
+        [Parameter(Mandatory = $false, Position = 0)]
         [string]$FirstName,
         
-        [Parameter(Mandatory=$false, Position=1)]
+        [Parameter(Mandatory = $false, Position = 1)]
         [string]$LastName
     )
     
@@ -170,17 +170,17 @@ function New-Username {
         return
     }
 
-    switch($LastName){
-        {$_.Length -gt 6} {
-            $username = ($FirstName.Substring(0,1) + $LastName)
+    switch ($LastName) {
+        { $_.Length -gt 6 } {
+            $username = ($FirstName.Substring(0, 1) + $LastName)
         }
-        {$_.Length + $FirstName.Length -le 8} {
+        { $_.Length + $FirstName.Length -le 8 } {
             $username = ($FirstName + $LastName)
         }
-        {($_.Length -lt 7) -and ($_.Length + $FirstName.Length -gt 8)} {
+        { ($_.Length -lt 7) -and ($_.Length + $FirstName.Length -gt 8) } {
             $trimLength = (8 - $LastName.Length)
-            $firstNameTrimmed = $FirstName.Substring(0,$trimLength)
-            $username = $firstNameTrimmed  + $LastName
+            $firstNameTrimmed = $FirstName.Substring(0, $trimLength)
+            $username = $firstNameTrimmed + $LastName
         }
     }
     
