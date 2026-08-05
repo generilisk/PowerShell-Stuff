@@ -65,7 +65,10 @@ Import-Module ActiveDirectory -ErrorAction Stop
 
 # Load CSV
 try {
-    $users = Import-Csv -Path $Path
+    $users = Import-Csv -Path $Path | Where-Object {
+        $_.PSObject.Properties.Value |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    }
 }
 catch {
     Write-Error "Failed to load CSV: $_"
