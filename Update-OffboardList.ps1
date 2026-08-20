@@ -75,6 +75,9 @@ catch {
     return
 }
 
+# Cache GivenName/Surname for all AD users once, used for concatenation-based matching below
+$adUserCache = Get-ADUser -Filter { GivenName -like "*" -and Surname -like "*" } -Properties GivenName, Surname, sAMAccountName
+
 foreach ($user in $users) {
     $name = $user.Name.Trim()
     $username = $user.Username
@@ -91,6 +94,18 @@ foreach ($user in $users) {
         $parts = $name -split '\s+'
         $reversedName = "$($parts[1]), $($parts[0])"
         $adUser = Get-ADUser -Filter { DisplayName -eq $reversedName } -Properties sAMAccountName
+    }
+
+    # If no match by DisplayName, compare against GivenName + Surname concatenated
+    # (handles credentials in DisplayName, e.g. "Stephen Strange, MD", and multi-word
+    # first/last names, e.g. GivenName "Peter Benjamin" / Surname "Parker")
+    if (-not $adUser) {
+        $concatMatches = @($adUserCache | Where-Object {
+            "$($_.GivenName) $($_.Surname)".Trim() -eq $name
+        })
+        if ($concatMatches.Count -eq 1) {
+            $adUser = $concatMatches[0]
+        }
     }
 
     if ($adUser) {
