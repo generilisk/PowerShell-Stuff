@@ -433,17 +433,26 @@ if ($DisableExpired) {
                 continue
             }
 
-            try {
-                $endDateParsed = [datetime]::ParseExact(
-                    $rawDateValue,
-                    'yyyy-MM-dd HH:mm:ss',
-                    [System.Globalization.CultureInfo]::InvariantCulture)
-                $endDateExpired = $endDateParsed -lt (Get-Date)
-            }
-            catch {
-                Write-Warning "Could not parse End Date '$rawDateValue' for $($user.Name) — expected format yyyy-MM-dd HH:mm:ss. Skipping."
+            $knownFormats = @(
+                'yyyy-MM-dd HH:mm:ss',   # format this script writes
+                'M/d/yyyy H:mm',          # Excel short-date reformat (no seconds, no leading zeros)
+                'M/d/yyyy HH:mm:ss'       # Excel reformat if seconds survive
+            )
+
+            $endDateParsed = $null
+            $parsedOk = [datetime]::TryParseExact(
+                $rawDateValue,
+                $knownFormats,
+                [System.Globalization.CultureInfo]::InvariantCulture,
+                [System.Globalization.DateTimeStyles]::None,
+                [ref]$endDateParsed)
+
+            if (-not $parsedOk) {
+                Write-Warning "Could not parse End Date '$rawDateValue' for $($user.Name) — unrecognized format. Skipping."
                 continue
             }
+
+            $endDateExpired = $endDateParsed -lt (Get-Date)
         }
 
         if (-not $endDateExpired) {
