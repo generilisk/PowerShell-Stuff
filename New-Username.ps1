@@ -7,11 +7,11 @@
     2. If full name <= 8 characters: Use full first name + last name
     3. If last name <= 6 and full name > 8: Trim first name to make exactly 8 characters
     
-    The script then checks Active Directory for username availability and handles collisions by:
-    - Adding additional letters from the first name (johsmith -> johnsmith)
-    - Only when all letters are used, appending numbers (johnsmith1, johnsmith2, etc.)
+    The script then checks Active Directory and the termed users folder path for username availability (a match in either counts as taken) and handles collisions by:
+    - Adding additional letters from the first name (diprince -> diaprince -> dianprince)
+    - Only when all letters are used, appending numbers (dianaprince1, dianaprince2, etc.)
     
-    Requires Active Directory PowerShell module and appropriate permissions.
+    Requires Active Directory PowerShell module, appropriate permissions, and read access to the termed users folder path.
 .PARAMETER FirstName
     The user's first name (prompted during execution)
 .PARAMETER LastName
@@ -19,7 +19,7 @@
 .EXAMPLE
     New-Username
     # Prompts for input and generates a unique username.
-    # For "John Smith": tries "johsmith", if taken tries "johnsmith", if taken tries "johnsmith1", etc.
+    # For "Diana Prince": tries "diprince", if taken tries "diaprince", then "dianprince", "dianaprince", then "dianaprince1", etc.
 .EXAMPLE
     New-Username
     # For "Bruce Wayne": returns "bruwayne" (if available)
@@ -29,18 +29,20 @@
     - Active Directory PowerShell module
     - Appropriate AD read permissions
     - Domain connectivity
+    - Read access to the termed users folder path (folders named exactly the username)
 #>
 
 # Script Name: New-Username
 # Created by Will Hughes
 # Date: 2024-10-31
-# Updated: 2025-12-05
+# Updated: 2026-09-23
 # Patch Notes: 
 # - Added script-level parameters for direct execution support
 # - Restored interactive prompting with hybrid automation support
 # - Optimized AD checks using Filter instead of Try/Catch
 # - Standardized output to console with color coding
 # - Improved AD validation and collision handling logic
+# - Added check against termed user folders (folder name = username) in addition to Active Directory
 
 [CmdletBinding()]
 param(
@@ -60,6 +62,7 @@ param(
 # but explicitness handles edge cases where autoload fails or errors are needed.
 # Since we are optimizing, we will rely on #Requires and autoloading.
 
+$script:TermedUsersPath = '\\shared01\hr\_HR Shared\TERMINATION\Termed employee files'
 
 function Test-ADUsername {
     [CmdletBinding()]
@@ -71,6 +74,26 @@ function Test-ADUsername {
     # Use Filter instead of try/catch for better performance
     $adUser = Get-ADUser -Filter "SamAccountName -eq '$Username'" -ErrorAction SilentlyContinue
     return [bool]$adUser
+}
+
+function Test-UsernameTaken {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Username
+    )
+
+    if (Test-ADUsername -Username $Username) {
+        Write-Host "  '$Username' exists in Active Directory" -ForegroundColor DarkYellow
+        return $true
+    }
+
+    if (Test-Path -LiteralPath (Join-Path $script:TermedUsersPath $Username) -PathType Container) {
+        Write-Host "  '$Username' matches a termed user folder" -ForegroundColor DarkYellow
+        return $true
+    }
+
+    return $false
 }
 
 function Get-UniqueUsername {
@@ -86,7 +109,7 @@ function Get-UniqueUsername {
     
 
     # First, check if the base username is available
-    if (-not (Test-ADUsername -Username $BaseUsername)) {
+    if (-not (Test-UsernameTaken -Username $BaseUsername)) {
         Write-Host "Username '$BaseUsername' is available" -ForegroundColor Green
         return $BaseUsername
     }
@@ -101,7 +124,7 @@ function Get-UniqueUsername {
     while ($firstNameIndex -lt $FirstName.Length) {
         $currentUsername = $FirstName.Substring(0, $firstNameIndex + 1) + $LastName
         
-        if (-not (Test-ADUsername -Username $currentUsername)) {
+        if (-not (Test-UsernameTaken -Username $currentUsername)) {
             Write-Host "Found available username: '$currentUsername'" -ForegroundColor Green
             return $currentUsername
         }
@@ -117,7 +140,7 @@ function Get-UniqueUsername {
     do {
         $numberedUsername = $currentUsername + $counter
         
-        if (-not (Test-ADUsername -Username $numberedUsername)) {
+        if (-not (Test-UsernameTaken -Username $numberedUsername)) {
             Write-Host "Found available username: '$numberedUsername'" -ForegroundColor Green
             return $numberedUsername
         }
@@ -141,6 +164,13 @@ function New-Username {
         [Parameter(Mandatory = $false, Position = 1)]
         [string]$LastName
     )
+
+    # Fail closed: if the termed path is unreachable, Test-Path returns $false
+    # and every username would look available.
+    if (-not (Test-Path -LiteralPath $script:TermedUsersPath -PathType Container)) {
+        Write-Error "Termed users path '$script:TermedUsersPath' is not reachable. Aborting so a termed username isn't reused."
+        return
+    }
     
     # Interactive fallback: Prompt if parameters are missing
     if ([string]::IsNullOrWhiteSpace($FirstName)) {
