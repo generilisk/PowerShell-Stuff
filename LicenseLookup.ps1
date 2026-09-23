@@ -19,6 +19,11 @@ It provides:
 Keep all SKU-name mappings and lookup logic here. If Microsoft adds new SKUs to your
 tenant, or the lookup strategy needs to change, update it once in this file and both
 scripts pick up the change automatically.
+
+Connect-LicenseGraph also installs Microsoft.Graph.Users and
+Microsoft.Graph.Identity.DirectoryManagement (CurrentUser scope) on first
+use if either is missing, so a fresh machine doesn't need manual module
+setup before running either script.
 #>
 
 # --- Friendly name lookup table (extend as needed for your tenant) ---
@@ -51,9 +56,23 @@ function Get-FriendlyName {
 function Connect-LicenseGraph {
     <#
     .SYNOPSIS
-    Connects to Microsoft Graph with the scope needed for license lookups.
+    Ensures required Graph modules are installed, then connects to Microsoft Graph
+    with the scope needed for license lookups.
     Returns $true on success, $false on failure (and writes an error).
     #>
+    foreach ($moduleName in @('Microsoft.Graph.Users', 'Microsoft.Graph.Identity.DirectoryManagement')) {
+        if (-not (Get-Module -ListAvailable -Name $moduleName)) {
+            try {
+                Write-Host "Installing required module: $moduleName..." -ForegroundColor Cyan
+                Install-Module -Name $moduleName -Scope CurrentUser -Force -ErrorAction Stop
+            }
+            catch {
+                Write-Error "Failed to install required module '$moduleName': $_"
+                return $false
+            }
+        }
+    }
+
     try {
         Connect-MgGraph -Scopes "User.Read.All" -NoWelcome
         return $true
