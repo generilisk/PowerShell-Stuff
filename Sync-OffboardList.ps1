@@ -5,6 +5,9 @@ requested items to a tracking CSV, then resolves usernames via Active Directory 
 Microsoft 365 license assignments for every unresolved/unlicensed row.
 
 .DESCRIPTION
+If $Path does not exist, the script creates it (and its containing folder, if needed)
+with the standard header row before proceeding.
+
 This is the combined pipeline for the offboarding tracker at $Path:
 
 1. Queries Freshservice for tickets matching $TicketStatus, $Category, and $SubCategory.
@@ -153,6 +156,22 @@ if ([string]::IsNullOrWhiteSpace($FreshserviceApiKey)) {
 }
 
 $localTz = [System.TimeZoneInfo]::FindSystemTimeZoneById("Pacific Standard Time")
+
+# ============================================================
+# Ensure CSV and its folder exist
+# ============================================================
+
+$csvFolder = Split-Path -Path $Path -Parent
+if ($csvFolder -and -not (Test-Path -Path $csvFolder)) {
+    Write-Host "Creating folder: $csvFolder" -ForegroundColor Cyan
+    New-Item -Path $csvFolder -ItemType Directory -Force | Out-Null
+}
+
+if (-not (Test-Path -Path $Path)) {
+    Write-Host "Creating new CSV: $Path" -ForegroundColor Cyan
+    $header = "Ticket,Name,Username,AD User Disabled,End Date,Profile Folder Work,Export Started,Export Completed,Export downloaded,Papercut User Deleted,AD User Deleted,Ticket Closed,License"
+    Set-Content -Path $Path -Value $header -Encoding UTF8
+}
 
 # ============================================================
 # PART 1: Pull new Off-board tickets from Freshservice and append to CSV
