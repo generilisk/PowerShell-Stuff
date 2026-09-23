@@ -20,11 +20,10 @@
     Requires: git installed on the machine running the script, and write
               access to the department share.
     Usage:    Run manually after pushing to GitHub.
-    Setup:    Edit $Dest below to the real department share path.
 #>
 
 $RepoUrl = 'https://github.com/generilisk/PowerShell-Stuff.git'
-$Dest    = '\\shastahealth.org\shared\ITS\Scripts'    # <-- EDIT: your real department share path
+$Dest    = '\\shastahealth.org\shared\ITS\Scripts'
 $Branch  = 'main'
 $Repo    = Join-Path $env:TEMP 'PowerShell-Stuff-sync'
 
