@@ -440,14 +440,17 @@ if ($DisableExpired) {
             )
 
             $endDateParsed = $null
-            $parsedOk = [datetime]::TryParseExact(
-                $rawDateValue,
-                $knownFormats,
-                [System.Globalization.CultureInfo]::InvariantCulture,
-                [System.Globalization.DateTimeStyles]::None,
-                [ref]$endDateParsed)
+            foreach ($fmt in $knownFormats) {
+                try {
+                    $endDateParsed = [datetime]::ParseExact($rawDateValue, $fmt, [System.Globalization.CultureInfo]::InvariantCulture)
+                    break
+                }
+                catch {
+                    # try next format
+                }
+            }
 
-            if (-not $parsedOk) {
+            if (-not $endDateParsed) {
                 Write-Warning "Could not parse End Date '$rawDateValue' for $($user.Name) — unrecognized format. Skipping."
                 continue
             }
