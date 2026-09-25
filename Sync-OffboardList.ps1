@@ -36,9 +36,6 @@ The path to the CSV file. Defaults to C:\offboard\progress.csv.
 .PARAMETER DefaultDomain
 Domain appended to resolved usernames (e.g. "shastahealth.org") to form a UPN for the Graph lookup.
 
-.PARAMETER FreshserviceDomain
-Your Freshservice subdomain, e.g. "shastahealth" for shastahealth.freshservice.com.
-
 .PARAMETER FreshserviceApiKey
 Your Freshservice API key. Optional - if omitted, the script retrieves it from the
 Microsoft.PowerShell.SecretStore vault (secret name "FreshserviceApiKey"), prompting
@@ -60,9 +57,6 @@ Switch. When set, disables the AD account and removes M365 licenses for any row 
 End Date has passed and whose 'AD User Disabled' column is still blank. Prompts for
 confirmation per user (standard PowerShell ShouldProcess) unless run with -Confirm:$false.
 Use -WhatIf to preview affected users with no changes made.
-
-.EXAMPLE
-.\Sync-OffboardList.ps1 -FreshserviceApiKey "abcdef123456" -FreshserviceDomain "shastahealth"
 
 .EXAMPLE
 .\Sync-OffboardList.ps1 -Path "H:\offboard\Progress.csv" -TicketStatus 3
