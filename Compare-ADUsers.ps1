@@ -251,7 +251,7 @@ try {
     $export = Read-Host "`nWould you like to export the comparison results to a file? (y/n)"
     if ($export -eq 'y' -or $export -eq 'Y') {
         $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-        $filename = "ADUserComparison_${($ADUser1.SamAccountName)}_vs_${($ADUser2.SamAccountName)}_${timestamp}.txt"
+        $filename = "ADUserComparison_$($ADUser1.SamAccountName)_vs_$($ADUser2.SamAccountName)_$timestamp.txt"
 
         $scriptOutput.ToString() | Out-File -FilePath $filename -Encoding UTF8
         Write-Host "Results exported to: $filename" -ForegroundColor Green
