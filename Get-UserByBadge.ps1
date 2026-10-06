@@ -10,17 +10,17 @@
 .PARAMETER BadgeNumber
     The badge number to search for. If omitted, the script prompts for one.
 .EXAMPLE
-    PS C:\> .\check-BadgeNumber.ps1 -BadgeNumber 48213
+    PS C:\> .\Get-UserByBadge.ps1 -BadgeNumber 48213
 
     Returns the ADUser object whose extensionAttribute3 is 48213.
 .EXAMPLE
-    PS C:\> $user = .\check-BadgeNumber.ps1 -BadgeNumber 48213
+    PS C:\> $user = .\Get-UserByBadge.ps1 -BadgeNumber 48213
     PS C:\> $user.Name
     Clark Kent
 
     Captures the returned user object for use in another script.
 .EXAMPLE
-    PS C:\> .\check-BadgeNumber.ps1
+    PS C:\> .\Get-UserByBadge.ps1
     Enter the badge number you want to search for: 48213
 
     Prompts interactively when no -BadgeNumber is supplied.
@@ -32,7 +32,7 @@ param(
     [string]$BadgeNumber
 )
 
-# Script Name: check-BadgeNumber.ps1
+# Script Name: Get-UserByBadge.ps1
 # Patch Notes:
 <#
     2026-09-26: Added -BadgeNumber parameter, switched output from
@@ -41,7 +41,7 @@ param(
     from another script instead of only run interactively. Status and
     not-found/error messages moved to Write-Warning so they don't mix
     into the object output. Added a blank-input guard and wrapped the
-    AD lookup in try/catch to match get-BadgeNumber.ps1's error handling.
+    AD lookup in try/catch to match Get-BadgeByUser.ps1's error handling.
 #>
 
 if ([string]::IsNullOrWhiteSpace($BadgeNumber)) {
