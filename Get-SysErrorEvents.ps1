@@ -9,7 +9,7 @@
     Another example of how to use this cmdlet
 #>
 
-#Script Name: GetSysErrorEvents
+#Script Name: Get-SysErrorEvents.ps1
 #Created by Will Hughes
 #Date: 2024-02-16
 #Patch Notes:
