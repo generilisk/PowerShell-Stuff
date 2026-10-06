@@ -15,14 +15,14 @@
     Accepts: Username, SamAccountName, or Distinguished Name
 
 .EXAMPLE
-    .\Generate-OffboardingFormData.ps1
+    .\Format-EDiscoveryOffboardingData.ps1
     
     Interactive mode - script prompts for username and displays formatted eDiscovery data.
 
 .EXAMPLE
-    .\Generate-OffboardingFormData.ps1 -Username jsmith
+    .\Format-EDiscoveryOffboardingData.ps1 -Username peparker
     
-    Direct parameter usage - generates eDiscovery data for user 'jsmith'.
+    Direct parameter usage - generates eDiscovery data for user 'peparker'.
 
 .AUTHOR
     Will Hughes
