@@ -9,7 +9,7 @@
 
     Shared lookup logic (friendly SKU names, Graph resolution strategy) lives in
     LicenseLookup.ps1, which must be in the same folder as this script. It is
-    also used by Update-OffboardList.ps1 - edit LicenseLookup.ps1 to change
+    also used by Sync-OffboardList.ps1 - edit LicenseLookup.ps1 to change
     behavior for both scripts at once.
 
 .NOTES

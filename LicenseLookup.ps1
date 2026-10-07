@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-Shared Microsoft Graph license-lookup helpers, used by both Get-UserLicenses.ps1
-and Update-OffboardList.ps1.
+Shared Microsoft Graph license-lookup helpers, used by both Get-OffboardListLicenses.ps1
+and Sync-OffboardList.ps1
 
 .DESCRIPTION
 This file is not meant to be run directly. Dot-source it from another script:
