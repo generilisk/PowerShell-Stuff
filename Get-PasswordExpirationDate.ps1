@@ -81,7 +81,7 @@ elseif ($ExpiryRaw) {
     Write-Host "User: $Username" -ForegroundColor Green
     Write-Host "Password Last Set: $PasswordLastSet" -ForegroundColor Yellow
     Write-Host "Password Expires On: $ExpirationDate" -ForegroundColor Magenta
-    Write-Host "===================================" -ForegroundColor CyanW
+    Write-Host "===================================" -ForegroundColor Cyan
 }
 else {
     Write-Host "`nUnable to retrieve password expiration date for user '$Username'." -ForegroundColor Red
