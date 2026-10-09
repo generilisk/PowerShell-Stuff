@@ -491,7 +491,7 @@ if ($DisableExpired) {
                 $upn = "$($user.Username)@$DefaultDomain"
                 $skuIds = (Get-MgUserLicenseDetail -UserId $upn -ErrorAction Stop).SkuId
                 if ($skuIds) {
-                    Set-MgUserLicense -UserId $upn -AddLicenses @() -RemoveLicenses $skuIds -ErrorAction Stop
+                    $null = Set-MgUserLicense -UserId $upn -AddLicenses @() -RemoveLicenses $skuIds -ErrorAction Stop
                     $user.License = "Removed $(Get-Date -Format 'yyyy-MM-dd')"
                 }
             }
