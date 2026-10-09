@@ -27,7 +27,7 @@ already exist in the CSV, rather than aborting. If the Graph connection cannot b
 the script saves usernames only and skips license data, matching the standalone script's
 original behavior.
 
-License lookup logic lives in LicenseLookup.ps1 (same folder), shared with
+License lookup logic lives in LicenseHelpers.psm1 (same folder), shared with
 Get-OffboardListLicenses.ps1 - update it there to change behavior for both scripts at once.
 
 .PARAMETER Path
@@ -372,7 +372,7 @@ foreach ($user in $users) {
 # PART 3: License lookup via Microsoft Graph (always runs)
 # ============================================================
 
-. "$PSScriptRoot\LicenseLookup.ps1"
+Import-Module "$PSScriptRoot\LicenseHelpers.psm1" -Force -ErrorAction Stop
 
 if (-not (Connect-LicenseGraph)) {
     Write-Host "Username resolution completed, but license lookup could not run. Saving CSV without license data." -ForegroundColor Yellow

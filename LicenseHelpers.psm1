@@ -4,17 +4,19 @@ Shared Microsoft Graph license-lookup helpers, used by both Get-OffboardListLice
 and Sync-OffboardList.ps1
 
 .DESCRIPTION
-This file is not meant to be run directly. Dot-source it from another script:
+This is a PowerShell module, not a script to run directly. Import it from another
+script that sits in the same folder:
 
-    . "$PSScriptRoot\LicenseLookup.ps1"
+    Import-Module "$PSScriptRoot\LicenseHelpers.psm1" -Force -ErrorAction Stop
 
-It provides:
-- $skuFriendlyNames       : hashtable mapping raw SKU part numbers to friendly product names
-- Get-FriendlyName        : looks up a friendly name for a raw SKU part number
+It exports:
 - Connect-LicenseGraph    : wraps Connect-MgGraph with consistent scope/error handling
 - Get-TenantSkuCache      : wraps Get-MgSubscribedSku -All (call once, reuse across users)
 - Resolve-UserLicense     : given a username/UPN, DefaultDomain, and the cached SKU list,
                             returns a friendly license summary string for that user.
+
+Internal to the module (not exported): $skuFriendlyNames, a hashtable mapping raw SKU
+part numbers to friendly product names, and Get-FriendlyName, which looks one up.
 
 Keep all SKU-name mappings and lookup logic here. If Microsoft adds new SKUs to your
 tenant, or the lookup strategy needs to change, update it once in this file and both
@@ -195,3 +197,5 @@ function Resolve-UserLicense {
         }
     }
 }
+
+Export-ModuleMember -Function Connect-LicenseGraph, Get-TenantSkuCache, Resolve-UserLicense

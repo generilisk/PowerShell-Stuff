@@ -8,8 +8,8 @@
     friendly summary table.
 
     Shared lookup logic (friendly SKU names, Graph resolution strategy) lives in
-    LicenseLookup.ps1, which must be in the same folder as this script. It is
-    also used by Sync-OffboardList.ps1 - edit LicenseLookup.ps1 to change
+    LicenseHelpers.psm1, which must be in the same folder as this script. It is
+    also used by Sync-OffboardList.ps1 - edit LicenseHelpers.psm1 to change
     behavior for both scripts at once.
 
 .NOTES
@@ -46,7 +46,7 @@ param(
 )
 
 # --- Load shared license-lookup helpers ---
-. "$PSScriptRoot\LicenseLookup.ps1"
+Import-Module "$PSScriptRoot\LicenseHelpers.psm1" -Force -ErrorAction Stop
 
 # --- Connect to Graph ---
 if (-not (Connect-LicenseGraph)) {
