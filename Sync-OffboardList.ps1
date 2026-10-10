@@ -65,7 +65,10 @@ Use -WhatIf to preview affected users with no changes made.
 .\Sync-OffboardList.ps1 -DisableExpired
 
 .NOTES
-Requires RSAT tools (Active Directory module) and the Microsoft.Graph.Users module.
+On first run the script sets up its own prerequisites: the required PowerShell modules
+are installed to the current user's profile, and the RSAT Active Directory tools are
+installed if missing (that one step needs an elevated PowerShell session). Needs
+PowerShell Gallery access, and the Freshservice API key (prompted for once, then saved).
 Must be run by a user with permission to query Active Directory and a Microsoft Graph
 admin role (User Administrator / License Administrator / Global Administrator).
 No E5 license is required to run this script.
@@ -99,6 +102,37 @@ param (
     [Parameter()]
     [switch]$DisableExpired
 )
+
+
+# ============================================================
+# PART 0: First-run prerequisites (skips anything already present)
+# ============================================================
+
+# Active Directory PowerShell module (RSAT). This is a Windows feature, so adding it
+# needs an elevated session; if that's missing we stop with clear instructions.
+if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $isAdmin) {
+        Write-Error ("The Active Directory PowerShell module (RSAT) is not installed. Run this script once from an " +
+            "elevated PowerShell window (Run as administrator) and it will install it, or install it yourself with: " +
+            "Add-WindowsCapability -Online -Name 'Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0'")
+        return
+    }
+    Write-Host "Installing RSAT Active Directory tools (this can take a few minutes)..." -ForegroundColor Cyan
+    try {
+        Add-WindowsCapability -Online -Name 'Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0' -WhatIf:$false -Confirm:$false -ErrorAction Stop | Out-Null
+    }
+    catch {
+        Write-Error "Failed to install RSAT Active Directory tools: $_"
+        return
+    }
+}
+
+# Shared license helper module (must be in the same folder as this script)
+Import-Module "$PSScriptRoot\LicenseHelpers.psm1" -Force -ErrorAction Stop
+
+# Microsoft Graph modules used by the license lookup/removal
+if (-not (Install-LicenseGraphModule)) { return }
 
 # ============================================================
 # SecretStore setup + Freshservice API key retrieval
@@ -372,9 +406,7 @@ foreach ($user in $users) {
 # PART 3: License lookup via Microsoft Graph (always runs)
 # ============================================================
 
-Import-Module "$PSScriptRoot\LicenseHelpers.psm1" -Force -ErrorAction Stop
-
-if (-not (Connect-LicenseGraph)) {
+if (-not (Connect-LicenseGraph -IncludeWrite:$DisableExpired)) {
     Write-Host "Username resolution completed, but license lookup could not run. Saving CSV without license data." -ForegroundColor Yellow
     $users | Export-Csv -Path $Path -NoTypeInformation
     return

@@ -10,8 +10,10 @@ script that sits in the same folder:
     Import-Module "$PSScriptRoot\LicenseHelpers.psm1" -Force -ErrorAction Stop
 
 It exports:
-- Connect-LicenseGraph    : wraps Connect-MgGraph with consistent scope/error handling
+- Connect-LicenseGraph    : wraps Connect-MgGraph with consistent scope/error handling;
+                            add -IncludeWrite when licenses will be removed
 - Get-TenantSkuCache      : wraps Get-MgSubscribedSku -All (call once, reuse across users)
+- Install-LicenseGraphModule : installs the Graph modules below if missing (CurrentUser scope)
 - Resolve-UserLicense     : given a username/UPN, DefaultDomain, and the cached SKU list,
                             returns a friendly license summary string for that user.
 
@@ -22,10 +24,10 @@ Keep all SKU-name mappings and lookup logic here. If Microsoft adds new SKUs to 
 tenant, or the lookup strategy needs to change, update it once in this file and both
 scripts pick up the change automatically.
 
-Connect-LicenseGraph also installs Microsoft.Graph.Users and
-Microsoft.Graph.Identity.DirectoryManagement (CurrentUser scope) on first
-use if either is missing, so a fresh machine doesn't need manual module
-setup before running either script.
+Install-LicenseGraphModule installs Microsoft.Graph.Users,
+Microsoft.Graph.Users.Actions and Microsoft.Graph.Identity.DirectoryManagement
+(CurrentUser scope) if any are missing, and Connect-LicenseGraph calls it first,
+so a fresh machine doesn't need manual module setup before running either script.
 #>
 
 # --- Friendly name lookup table (extend as needed for your tenant) ---
@@ -55,28 +57,55 @@ function Get-FriendlyName {
     return $SkuPartNumber  # fall back to raw name if not mapped
 }
 
+function Install-LicenseGraphModule {
+    <#
+    .SYNOPSIS
+    Installs the Microsoft Graph modules the license functions need (CurrentUser scope).
+    Sets up TLS 1.2 and the NuGet provider first so it also works on a brand-new
+    Windows PowerShell 5.1 machine. Does nothing if everything is already installed.
+    Returns $true on success, $false on failure (and writes an error).
+    #>
+    $required = 'Microsoft.Graph.Users', 'Microsoft.Graph.Users.Actions', 'Microsoft.Graph.Identity.DirectoryManagement'
+    $missing = @($required | Where-Object { -not (Get-Module -ListAvailable -Name $_) })
+    if ($missing.Count -eq 0) { return $true }
+
+    try {
+        if ($PSVersionTable.PSVersion.Major -lt 6) {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        }
+        if (-not (Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction SilentlyContinue |
+                Where-Object { $_.Version -ge [version]'2.8.5.201' })) {
+            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Scope CurrentUser -Force -WhatIf:$false -Confirm:$false -ErrorAction Stop | Out-Null
+        }
+        foreach ($moduleName in $missing) {
+            Write-Host "Installing required module: $moduleName..." -ForegroundColor Cyan
+            Install-Module -Name $moduleName -Scope CurrentUser -Force -WhatIf:$false -Confirm:$false -ErrorAction Stop
+        }
+        return $true
+    }
+    catch {
+        Write-Error "Failed to install required Microsoft Graph modules: $_"
+        return $false
+    }
+}
+
 function Connect-LicenseGraph {
     <#
     .SYNOPSIS
     Ensures required Graph modules are installed, then connects to Microsoft Graph
-    with the scope needed for license lookups.
+    with the scopes needed for license lookups. Add -IncludeWrite when licenses will
+    be removed (adds LicenseAssignment.ReadWrite.All).
     Returns $true on success, $false on failure (and writes an error).
     #>
-    foreach ($moduleName in @('Microsoft.Graph.Users', 'Microsoft.Graph.Identity.DirectoryManagement')) {
-        if (-not (Get-Module -ListAvailable -Name $moduleName)) {
-            try {
-                Write-Host "Installing required module: $moduleName..." -ForegroundColor Cyan
-                Install-Module -Name $moduleName -Scope CurrentUser -Force -ErrorAction Stop
-            }
-            catch {
-                Write-Error "Failed to install required module '$moduleName': $_"
-                return $false
-            }
-        }
-    }
+    param([switch]$IncludeWrite)
+
+    if (-not (Install-LicenseGraphModule)) { return $false }
+
+    $scopes = @('User.Read.All', 'LicenseAssignment.Read.All')
+    if ($IncludeWrite) { $scopes += 'LicenseAssignment.ReadWrite.All' }
 
     try {
-        Connect-MgGraph -Scopes "User.Read.All" -NoWelcome
+        Connect-MgGraph -Scopes $scopes -NoWelcome -ErrorAction Stop
         return $true
     }
     catch {
@@ -198,4 +227,4 @@ function Resolve-UserLicense {
     }
 }
 
-Export-ModuleMember -Function Connect-LicenseGraph, Get-TenantSkuCache, Resolve-UserLicense
+Export-ModuleMember -Function Install-LicenseGraphModule, Connect-LicenseGraph, Get-TenantSkuCache, Resolve-UserLicense
