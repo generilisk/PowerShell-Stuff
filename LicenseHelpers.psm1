@@ -101,8 +101,8 @@ function Connect-LicenseGraph {
 
     if (-not (Install-LicenseGraphModule)) { return $false }
 
-    $scopes = @('User.Read.All', 'LicenseAssignment.Read.All')
-    if ($IncludeWrite) { $scopes += 'LicenseAssignment.ReadWrite.All' }
+    $scopes = @('User.Read.All')
+    if ($IncludeWrite) { $scopes += 'Directory.ReadWrite.All' }
 
     try {
         Connect-MgGraph -Scopes $scopes -NoWelcome -ErrorAction Stop
