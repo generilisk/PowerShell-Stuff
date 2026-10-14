@@ -5,8 +5,11 @@
     Fetches the pwdLastSet attribute and the computed password expiration date
     (msDS-UserPasswordExpiryTimeComputed) for a given Active Directory user.
     Handles accounts with "password never expires" set, since that attribute
-    returns a sentinel value in that case rather than a usable date.
+    returns a sentinel value in that case rather than a usable date. Also handles
+    accounts flagged to change their password at next logon (pwdLastSet is 0).
     If no username is provided as a parameter, the script prompts for one.
+    If the Active Directory tools (RSAT) are missing they are installed automatically
+    (needs an elevated session).
 .PARAMETER Username
     The SamAccountName of the user to look up. If omitted, the script prompts for it.
 .EXAMPLE
@@ -47,24 +50,57 @@
 #              ArgumentOutOfRangeException instead of displaying a clean message. Replaced
 #              exit with return so this can be called from another script without killing
 #              the whole session.
+# 2026.10.13 - Installs RSAT Active Directory tools if missing (needs elevation). Blank username
+#              is now rejected instead of being sent to AD. "Not found" is only reported when the
+#              user really doesn't exist; other AD errors (no DC, access denied) now show their
+#              actual message. Added a message for accounts set to change password at next logon
+#              (previously reported as "unable to retrieve").
 
 param (
     [string]$Username
 )
 
+# Active Directory PowerShell module (RSAT). This is a Windows feature, so adding it
+# needs an elevated session; if that's missing we stop with clear instructions.
+if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $isAdmin) {
+        Write-Error ("The Active Directory PowerShell module (RSAT) is not installed. Run this script once from an " +
+            "elevated PowerShell window (Run as administrator) and it will install it, or install it yourself with: " +
+            "Add-WindowsCapability -Online -Name 'Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0'")
+        return
+    }
+    Write-Host "Installing RSAT Active Directory tools (this can take a few minutes)..." -ForegroundColor Cyan
+    try {
+        Add-WindowsCapability -Online -Name 'Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0' -WhatIf:$false -Confirm:$false -ErrorAction Stop | Out-Null
+    }
+    catch {
+        Write-Error "Failed to install RSAT Active Directory tools: $_"
+        return
+    }
+}
+
 # msDS-UserPasswordExpiryTimeComputed returns this sentinel value when
 # "password never expires" is set on the account, instead of 0 or $null.
 $NeverExpiresValue = [int64]::MaxValue
 
-if (-not $Username) {
+if ([string]::IsNullOrWhiteSpace($Username)) {
     $Username = Read-Host "Enter the username"
+}
+if ([string]::IsNullOrWhiteSpace($Username)) {
+    Write-Host "No username entered." -ForegroundColor Red
+    return
 }
 
 try {
-    $User = Get-ADUser -Identity $Username -Properties "pwdLastSet", "msDS-UserPasswordExpiryTimeComputed"
+    $User = Get-ADUser -Identity $Username -Properties "pwdLastSet", "msDS-UserPasswordExpiryTimeComputed" -ErrorAction Stop
+}
+catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
+    Write-Host "User '$Username' not found." -ForegroundColor Red
+    return
 }
 catch {
-    Write-Host "User '$Username' not found." -ForegroundColor Red
+    Write-Host "Could not look up user '$Username': $($_.Exception.Message)" -ForegroundColor Red
     return
 }
 
@@ -74,6 +110,10 @@ $ExpiryRaw = $User."msDS-UserPasswordExpiryTimeComputed"
 if ($ExpiryRaw -eq $NeverExpiresValue) {
     Write-Host "`nUser '$Username' has `"password never expires`" set." -ForegroundColor Yellow
     Write-Host "Password Last Set: $PasswordLastSet"
+}
+elseif ($User.pwdLastSet -eq 0) {
+    # pwdLastSet of 0 means the account is flagged to change its password at next logon
+    Write-Host "`nUser '$Username' must change their password at next logon." -ForegroundColor Yellow
 }
 elseif ($ExpiryRaw) {
     $ExpirationDate = [datetime]::FromFileTime($ExpiryRaw)
