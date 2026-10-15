@@ -230,7 +230,9 @@ try {
 
     if ($ADUser1.SamAccountName -eq $ADUser2.SamAccountName) {
         Write-Host "Both usernames are the same. Please run the script again with different usernames." -ForegroundColor Yellow
-        exit
+        Write-Host "`nPress Enter to continue..." -ForegroundColor Gray
+        $null = Read-Host
+        return
     }
 
     Write-Host "`nRetrieving user information..." -ForegroundColor Yellow
