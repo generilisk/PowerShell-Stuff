@@ -16,9 +16,11 @@ It exports:
 - Install-LicenseGraphModule : installs the Graph modules below if missing (CurrentUser scope)
 - Resolve-UserLicense     : given a username/UPN, DefaultDomain, and the cached SKU list,
                             returns a friendly license summary string for that user.
+- Get-FriendlyName        : translates one raw SKU part number to its friendly product name
+                            (falls back to the raw name if it isn't in the table)
 
 Internal to the module (not exported): $skuFriendlyNames, a hashtable mapping raw SKU
-part numbers to friendly product names, and Get-FriendlyName, which looks one up.
+part numbers to friendly product names, which Get-FriendlyName reads.
 
 Keep all SKU-name mappings and lookup logic here. If Microsoft adds new SKUs to your
 tenant, or the lookup strategy needs to change, update it once in this file and both
@@ -94,7 +96,7 @@ function Connect-LicenseGraph {
     .SYNOPSIS
     Ensures required Graph modules are installed, then connects to Microsoft Graph
     with the scopes needed for license lookups. Add -IncludeWrite when licenses will
-    be removed (adds LicenseAssignment.ReadWrite.All).
+    be removed (adds Directory.ReadWrite.All).
     Returns $true on success, $false on failure (and writes an error).
     #>
     param([switch]$IncludeWrite)
@@ -227,4 +229,4 @@ function Resolve-UserLicense {
     }
 }
 
-Export-ModuleMember -Function Install-LicenseGraphModule, Connect-LicenseGraph, Get-TenantSkuCache, Resolve-UserLicense
+Export-ModuleMember -Function Install-LicenseGraphModule, Connect-LicenseGraph, Get-TenantSkuCache, Resolve-UserLicense, Get-FriendlyName
