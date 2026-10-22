@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
 Pulls open Off-board tickets from Freshservice, appends any new employees found in their
-requested items to a tracking CSV, then resolves usernames via Active Directory and looks up
-Microsoft 365 license assignments for every unresolved/unlicensed row.
+requested items to a tracking CSV, resolves usernames via Active Directory, and (with
+-DisableExpired) carries out the offboarding steps for everyone past their end date.
 
 .DESCRIPTION
 If $Path does not exist, the script creates it (and its containing folder, if needed)
@@ -18,17 +18,29 @@ This is the combined pipeline for the offboarding tracker at $Path:
 3. Reloads the full CSV and resolves the 'Username' column via Active Directory for any row
    still missing one - exact DisplayName match, then 'Last, First', then GivenName+Surname
    concatenation, then interactive fuzzy match, then manual entry as a last resort.
-4. Queries Microsoft Graph for each resolved user's assigned licenses and writes a
-   friendly-named summary into the 'License' column.
-5. Saves the CSV and prints a summary table of every row (Ticket, Name, Username, License).
+4. Past each user's end date (-DisableExpired only), carries out the offboarding steps, each
+   one recorded in its own CSV column:
+   - Disables the AD account ('AD User Disabled').
+   - Licenses: asks for confirmation, then posts the user's M365 license list to the ticket as
+     a private note ('Licenses Noted'), and only if the note posts removes the licenses
+     ('Licenses Removed').
+   - Groups: same pattern - asks, posts the group list as a private note so whoever takes over
+     the role can see which groups to assign ('Groups Noted'), and only if the note posts
+     removes the AD group memberships ('Groups Removed'). The primary group is left alone.
+   Anything declined or failed stays blank and is asked again on the next run.
+5. Saves the CSV and prints a summary table of every row.
+
+The CSV columns are kept in workflow order. The last three ('Profile Folder Work', 'AD User
+Deleted', 'Ticket Closed') are filled in by hand or by other scripts: the user's files are
+backed up first, then the AD account is deleted, and the ticket is closed last.
 
 If the Freshservice call fails, the script warns and proceeds to step 3 using whatever rows
-already exist in the CSV, rather than aborting. If the Graph connection cannot be established,
-the script saves usernames only and skips license data, matching the standalone script's
-original behavior.
+already exist in the CSV, rather than aborting - but -DisableExpired is skipped for that run,
+because ticket data can't be trusted. -DisableExpired is also skipped if Microsoft Graph
+can't be reached.
 
-License lookup logic lives in LicenseHelpers.psm1 (same folder), shared with
-Get-OffboardListLicenses.ps1 - update it there to change behavior for both scripts at once.
+Graph connection and license name translation come from LicenseHelpers.psm1 (same folder),
+shared with Get-OffboardListLicenses.ps1.
 
 .PARAMETER Path
 The path to the CSV file. Defaults to C:\offboard\progress.csv.
@@ -53,10 +65,16 @@ Ticket category to filter for after pulling by status. Defaults to "User Managem
 Ticket sub-category to filter for after pulling by status. Defaults to "Off-board".
 
 .PARAMETER DisableExpired
-Switch. When set, disables the AD account and removes M365 licenses for any row whose
-End Date has passed and whose 'AD User Disabled' column is still blank. Prompts for
-confirmation per user (standard PowerShell ShouldProcess) unless run with -Confirm:$false.
+Switch. When set, for any row whose End Date has passed: disables the AD account, then
+removes the M365 licenses and the AD group memberships (except the primary group, e.g. Domain
+Users). Each step prompts for confirmation per user (standard PowerShell ShouldProcess) unless
+run with -Confirm:$false. On yes, the license or group list is first posted to the ticket as a
+private note, and the removal only happens if that note posts successfully.
 Use -WhatIf to preview affected users with no changes made.
+Each AD disable, license removal, and group removal also adds a private note to the user's
+ticket (what was done, when, and by whom).
+If the Freshservice pull fails, or Microsoft Graph can't be reached, -DisableExpired is
+skipped for that run (nothing is disabled or removed).
 
 .EXAMPLE
 .\Sync-OffboardList.ps1 -Path "H:\offboard\Progress.csv" -TicketStatus 3
@@ -76,7 +94,8 @@ No E5 license is required to run this script.
 category/sub_category are not filterable Freshservice API fields - the ticket list is pulled
 by status only, then filtered client-side.
 
-For an on-demand license-only check (no AD updates), use Get-UserLicenses.ps1 instead.
+Microsoft Graph is only contacted when -DisableExpired is used. For an on-demand license-only
+check (no AD updates), use Get-OffboardListLicenses.ps1 instead.
 #>
 
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
@@ -197,13 +216,15 @@ if ($csvFolder -and -not (Test-Path -Path $csvFolder)) {
 
 if (-not (Test-Path -Path $Path)) {
     Write-Host "Creating new CSV: $Path" -ForegroundColor Cyan
-    $header = "Ticket,Name,Username,AD User Disabled,End Date,Profile Folder Work,Export Started,Export Completed,Export downloaded,Papercut User Deleted,AD User Deleted,Ticket Closed,License"
+    $header = "Ticket,Name,Username,End Date,AD User Disabled,Licenses Noted,Licenses Removed,Groups Noted,Groups Removed,Profile Folder Work,AD User Deleted,Ticket Closed"
     Set-Content -Path $Path -Value $header -Encoding UTF8
 }
 
 # ============================================================
 # PART 1: Pull new Off-board tickets from Freshservice and append to CSV
 # ============================================================
+
+$freshserviceOk = $false   # set to $true only if the whole Freshservice pull succeeds; gates -DisableExpired
 
 $pair = "$FreshserviceApiKey`:X"
 $encoded = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pair))
@@ -299,9 +320,13 @@ try {
     else {
         Write-Host "No new Freshservice entries to add." -ForegroundColor Cyan
     }
+    $freshserviceOk = $true
 }
 catch {
     Write-Warning "Freshservice pull failed: $_. Continuing with existing CSV rows only."
+    if ($DisableExpired) {
+        Write-Warning "-DisableExpired will be skipped this run: with Freshservice unreachable, no accounts, licenses, or groups will be changed."
+    }
 }
 
 # ============================================================
@@ -321,7 +346,50 @@ catch {
     return
 }
 
-$adUserCache = Get-ADUser -Filter { GivenName -like "*" -and Surname -like "*" } -Properties GivenName, Surname, sAMAccountName
+# Properties used to tell people apart in the pick lists below
+$adProps = 'GivenName', 'Surname', 'DisplayName', 'sAMAccountName', 'Title', 'Department', 'Enabled'
+$adUserCache = Get-ADUser -Filter { GivenName -like "*" -and Surname -like "*" } -Properties $adProps
+
+# Helper: one-line description of an AD account, so similar names can be told apart
+function Format-AdUserChoice {
+    param($AdUser)
+    $details = @($AdUser.Title, $AdUser.Department) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    $status  = if ($AdUser.Enabled) { 'enabled' } else { 'DISABLED' }
+    $text    = "$($AdUser.DisplayName) [$($AdUser.sAMAccountName)]"
+    if ($details) { $text += " - $($details -join ', ')" }
+    return "$text - $status"
+}
+
+# Helper: show a numbered list and let the operator pick one.
+# Returns the chosen AD account, or $null if they skip or enter something invalid.
+function Select-AdUserMatch {
+    param([string]$Name, $Candidates, [string]$Heading)
+    Write-Host "`n$Heading '$Name':" -ForegroundColor Yellow
+    $i = 1
+    foreach ($candidate in $Candidates) {
+        Write-Host "$i. $(Format-AdUserChoice $candidate)"
+        $i++
+    }
+    $choice = Read-Host "Enter the number of the correct user, or press Enter to skip"
+    if ([string]::IsNullOrWhiteSpace($choice) -or $choice -notmatch '^\d+$') {
+        Write-Host "Skipped."
+        return $null
+    }
+    $index = [int]$choice - 1
+    if ($index -ge 0 -and $index -lt $Candidates.Count) { return $Candidates[$index] }
+    Write-Host "Invalid choice. Skipped."
+    return $null
+}
+
+# Helper: does a ticket name ("First Last") match an AD DisplayName ("First Last" or "Last, First")?
+function Test-NameMatchesDisplayName {
+    param([string]$TicketName, [string]$DisplayName)
+    $a = ($TicketName  -replace '\s+', ' ').Trim()
+    $b = ($DisplayName -replace '\s+', ' ').Trim()
+    if ($a -ieq $b) { return $true }
+    if ($a -match '^(\S+) (\S+)$' -and $b -ieq "$($Matches[2]), $($Matches[1])") { return $true }
+    return $false
+}
 
 foreach ($user in $users) {
     $name = $user.Name.Trim()
@@ -331,29 +399,36 @@ foreach ($user in $users) {
         continue
     }
 
-    $adUser = Get-ADUser -Filter { DisplayName -eq $name } -Properties sAMAccountName
+    # Look for exact matches: DisplayName, then "Last, First", then GivenName + Surname.
+    # Exactly one match is used automatically. MORE than one is ambiguous, so a person always picks:
+    # guessing wrong here would put the wrong person's groups on the ticket and could disable them.
+    $exactMatches = @(Get-ADUser -Filter { DisplayName -eq $name } -Properties $adProps)
 
-    if (-not $adUser -and $name -match '^\S+\s+\S+$') {
+    if ($exactMatches.Count -eq 0 -and $name -match '^\S+\s+\S+$') {
         $parts = $name -split '\s+'
         $reversedName = "$($parts[1]), $($parts[0])"
-        $adUser = Get-ADUser -Filter { DisplayName -eq $reversedName } -Properties sAMAccountName
+        $exactMatches = @(Get-ADUser -Filter { DisplayName -eq $reversedName } -Properties $adProps)
     }
 
-    if (-not $adUser) {
-        $concatMatches = @($adUserCache | Where-Object {
+    if ($exactMatches.Count -eq 0) {
+        $exactMatches = @($adUserCache | Where-Object {
             "$($_.GivenName) $($_.Surname)".Trim() -eq $name
         })
-        if ($concatMatches.Count -eq 1) {
-            $adUser = $concatMatches[0]
-        }
     }
 
-    if ($adUser) {
-        $user.Username = $adUser.sAMAccountName
+    if ($exactMatches.Count -eq 1) {
+        $user.Username = $exactMatches[0].sAMAccountName
         continue
     }
 
-    $potentialMatches = Get-ADUser -Filter { DisplayName -like "*$name*" } -Properties DisplayName, sAMAccountName
+    if ($exactMatches.Count -gt 1) {
+        $selected = Select-AdUserMatch -Name $name -Candidates $exactMatches -Heading "More than one Active Directory account matches"
+        $user.Username = if ($selected) { $selected.sAMAccountName } else { "" }
+        continue
+    }
+
+    # No exact match: offer partial matches
+    $potentialMatches = @(Get-ADUser -Filter { DisplayName -like "*$name*" } -Properties $adProps)
 
     if ($potentialMatches.Count -eq 0) {
         Write-Host "No Active Directory match found for '$name'."
@@ -361,176 +436,349 @@ foreach ($user in $users) {
         continue
     }
 
-    Write-Host "`nPossible matches for '$name':"
-    $i = 1
-    foreach ($match in $potentialMatches) {
-        Write-Host "$i. $($match.DisplayName) [$($match.sAMAccountName)]"
-        $i++
-    }
-
-    $choice = Read-Host "Enter the number of the correct user, or press Enter to skip"
-
-    if ([string]::IsNullOrWhiteSpace($choice) -or -not ($choice -match '^\d+$')) {
-        Write-Host "Skipped."
-        $user.Username = ""
-        continue
-    }
-
-    $selectedIndex = [int]$choice - 1
-
-    if ($selectedIndex -ge 0 -and $selectedIndex -lt $potentialMatches.Count) {
-        $selectedUser = $potentialMatches[$selectedIndex]
-        $user.Username = $selectedUser.sAMAccountName
-    }
-    else {
-        Write-Host "Invalid choice. Skipped."
-        $user.Username = ""
-    }
+    $selected = Select-AdUserMatch -Name $name -Candidates $potentialMatches -Heading "Possible matches for"
+    $user.Username = if ($selected) { $selected.sAMAccountName } else { "" }
 }
 
 # ============================================================
 # PART 2b: Manual entry for any names that couldn't be resolved
 # ============================================================
+# A typed username is checked against AD, and the operator confirms the account it belongs to
+# before it is used. A typo that happens to be a real account would otherwise point every later
+# step (notes, disable, license and group removal) at the wrong person.
 foreach ($user in $users) {
-    if ([string]::IsNullOrWhiteSpace($user.Username)) {
-        Write-Host "`nUnable to automatically resolve a username for '$($user.Name)'." -ForegroundColor Yellow
+    if (-not [string]::IsNullOrWhiteSpace($user.Username)) { continue }
+
+    Write-Host "`nUnable to automatically resolve a username for '$($user.Name)'." -ForegroundColor Yellow
+
+    while ($true) {
         $manualEntry = Read-Host "Enter the correct username, or press Enter to skip this user"
+        if ([string]::IsNullOrWhiteSpace($manualEntry)) { break }
 
-        if (![string]::IsNullOrWhiteSpace($manualEntry)) {
-            $user.Username = $manualEntry.Trim()
-        }
-    }
-}
-
-# ============================================================
-# PART 3: License lookup via Microsoft Graph (always runs)
-# ============================================================
-
-if (-not (Connect-LicenseGraph -IncludeWrite:$DisableExpired)) {
-    Write-Host "Username resolution completed, but license lookup could not run. Saving CSV without license data." -ForegroundColor Yellow
-    $users | Export-Csv -Path $Path -NoTypeInformation
-    return
-}
-
-$tenantSkus = Get-TenantSkuCache
-
-foreach ($user in $users) {
-    if ([string]::IsNullOrWhiteSpace($user.Username)) {
-        $licenseValue = "Skipped - no username resolved"
-    }
-    else {
-        $resolved = Resolve-UserLicense -Username $user.Username -DefaultDomain $DefaultDomain -TenantSkus $tenantSkus
-        $licenseValue = $resolved.Licenses
-    }
-
-    if ($user.PSObject.Properties.Name -contains "License") {
-        $user.License = $licenseValue
-    }
-    else {
-        $user | Add-Member -NotePropertyName "License" -NotePropertyValue $licenseValue -Force
-    }
-}
-
-# ============================================================
-# PART 3.5: Disable AD account + remove licenses for expired end dates
-# ============================================================
-
-if ($DisableExpired) {
-    foreach ($user in $users) {
-        if ([string]::IsNullOrWhiteSpace($user.Username)) { continue }
-        if ($user.'AD User Disabled' -match '\S') { continue }  # already handled
-
-        # Check actual AD state first - catches accounts disabled outside this script
-        # (manually, by another process, or before this script existed)
         try {
-            $adAccount = Get-ADUser -Identity $user.Username -Properties Enabled -ErrorAction Stop
+            $found = Get-ADUser -Identity $manualEntry.Trim() -Properties $adProps -ErrorAction Stop
         }
         catch {
-            Write-Warning "Could not look up AD account for $($user.Name) ($($user.Username)): $_"
+            Write-Warning "'$($manualEntry.Trim())' was not found in Active Directory. Check the spelling and try again."
             continue
         }
 
-        # Determine whether the end date has passed (needed either way, to decide on licenses)
-        $endDateExpired = $false
-        if (-not [string]::IsNullOrWhiteSpace($user.'End Date')) {
-            $rawDateValue = $user.'End Date'
-            if ($rawDateValue -isnot [string]) {
-                Write-Warning "'End Date' for $($user.Name) is not a plain text value (found $($rawDateValue.GetType().Name)) — check for a duplicate 'End Date' column in the CSV. Skipping."
-                continue
-            }
-
-            $knownFormats = @(
-                'yyyy-MM-dd HH:mm:ss',   # format this script writes
-                'M/d/yyyy H:mm',          # Excel short-date reformat (no seconds, no leading zeros)
-                'M/d/yyyy HH:mm:ss'       # Excel reformat if seconds survive
-            )
-
-            $endDateParsed = $null
-            foreach ($fmt in $knownFormats) {
-                try {
-                    $endDateParsed = [datetime]::ParseExact($rawDateValue, $fmt, [System.Globalization.CultureInfo]::InvariantCulture)
-                    break
-                }
-                catch {
-                    # try next format
-                }
-            }
-
-            if (-not $endDateParsed) {
-                Write-Warning "Could not parse End Date '$rawDateValue' for $($user.Name) — unrecognized format. Skipping."
-                continue
-            }
-
-            $endDateExpired = $endDateParsed -lt (Get-Date)
+        Write-Host "  Found: $(Format-AdUserChoice $found)"
+        if (-not (Test-NameMatchesDisplayName -TicketName $user.Name -DisplayName $found.DisplayName)) {
+            Write-Host "  Note: this name does not match the name on the ticket ('$($user.Name)')." -ForegroundColor Yellow
         }
 
-        if (-not $endDateExpired) {
-            # Not past its date - if already disabled some other way, just record that; no license action
-            if (-not $adAccount.Enabled) {
-                $user.'AD User Disabled' = "Y"
-            }
-            continue
+        $confirm = Read-Host "Use this account for '$($user.Name)'? (y/n)"
+        if ($confirm -match '^(y|yes)$') {
+            $user.Username = $found.sAMAccountName
+            break
         }
+    }
+}
 
-        # Past its end date from here on - account should end up disabled AND licenses removed,
-        # regardless of whether AD disable already happened via another process
-        $target = "$($user.Name) ($($user.Username))"
-
-        if ($adAccount.Enabled) {
-            if ($PSCmdlet.ShouldProcess($target, "Disable AD account (end date $($user.'End Date') has passed)")) {
-                try {
-                    Disable-ADAccount -Identity $user.Username -ErrorAction Stop
-                    $user.'AD User Disabled' = "Y"
-                }
-                catch {
-                    $user.'AD User Disabled' = "Error: $($_.Exception.Message)"
-                    Write-Warning "Failed to disable AD account for $target : $_"
-                    continue
-                }
-            }
-            else {
-                continue  # user declined the prompt; don't touch licenses either
-            }
+# Make sure every row has the 'Groups Noted', 'Groups Removed', 'Licenses Noted' and
+# 'Licenses Removed' columns (older CSVs won't)
+foreach ($user in $users) {
+    foreach ($column in 'Groups Noted', 'Groups Removed', 'Licenses Noted', 'Licenses Removed') {
+        if ($user.PSObject.Properties.Name -notcontains $column) {
+            $user | Add-Member -NotePropertyName $column -NotePropertyValue '' -Force
         }
-        else {
-            # Already disabled outside this script, but still past its date - record it
-            $user.'AD User Disabled' = "Y"
-        }
+    }
+}
 
-        # Remove licenses - runs whenever end date has passed, independent of who disabled AD
-        if ($PSCmdlet.ShouldProcess($target, "Remove M365 licenses (end date $($user.'End Date') has passed)")) {
+# Put columns in workflow order. Any extra columns someone added by hand are kept, after the standard ones.
+# The file itself is rewritten in this order at the next save.
+$columnOrder = 'Ticket', 'Name', 'Username', 'End Date', 'AD User Disabled',
+               'Licenses Noted', 'Licenses Removed', 'Groups Noted', 'Groups Removed',
+               'Profile Folder Work', 'AD User Deleted', 'Ticket Closed'
+$users = @($users)
+if ($users.Count -gt 0) {
+    $extraColumns = @($users[0].PSObject.Properties.Name | Where-Object { $_ -notin $columnOrder })
+    $users = @($users | Select-Object -Property ($columnOrder + $extraColumns))
+}
+
+# Helper: add a private note to a Freshservice ticket. Throws on failure so each caller decides
+# how to report it. Notes are HTML (plain line breaks are ignored), so callers build the body
+# with <br>. Sent as JSON (works in Windows PowerShell 5.1 and 7; -Form needs PowerShell 7).
+# $headers already holds the API authorization from Part 1.
+function Add-TicketNote {
+    param(
+        [Parameter(Mandatory)][string]$Ticket,
+        [Parameter(Mandatory)][string]$Body
+    )
+    $noteUri = "https://schc.freshservice.com/api/v2/tickets/$Ticket/notes"
+    $payload = @{ body = $Body; private = $true } | ConvertTo-Json
+    $null = Invoke-RestMethod -Uri $noteUri -Method Post -Headers $headers `
+        -ContentType 'application/json; charset=utf-8' -Body $payload -ErrorAction Stop
+}
+
+# Helper: save the CSV now instead of waiting for Part 4. Used as a checkpoint so that notes already
+# posted and accounts already changed are remembered even if the run is interrupted. Skipped under
+# -WhatIf, and a save failure (e.g. the CSV is open in Excel) only warns.
+function Save-OffboardCsv {
+    if ($WhatIfPreference) { return }
+    try { $users | Export-Csv -Path $Path -NoTypeInformation -ErrorAction Stop }
+    catch { Write-Warning "Could not save progress to $Path (is it open in another program?): $($_.Exception.Message)" }
+}
+
+# Checkpoint: keep the resolved usernames and the new column order even if the run is interrupted later
+Save-OffboardCsv
+
+# ============================================================
+# PART 3: Microsoft Graph connection (only needed for -DisableExpired)
+# ============================================================
+
+# Destructive actions only run when the Freshservice pull fully succeeded and Graph is reachable
+$runDisable = $DisableExpired.IsPresent -and $freshserviceOk
+
+if ($runDisable -and -not (Connect-LicenseGraph -IncludeWrite)) {
+    Write-Warning "Could not connect to Microsoft Graph, so -DisableExpired was skipped this run (nothing was disabled or removed)."
+    $runDisable = $false
+}
+
+# ============================================================
+# PART 3.5: Disable AD account, remove licenses and groups for expired end dates
+# ============================================================
+
+if ($runDisable) {
+    # try/finally so the CSV is saved even if the run is interrupted (Ctrl+C at a prompt, an error).
+    # Without this, accounts already disabled or groups already removed would be forgotten.
+    try {
+        foreach ($user in $users) {
+            if ([string]::IsNullOrWhiteSpace($user.Username)) { continue }
+            if ($user.'AD User Deleted' -match '\S') { continue }  # account is gone, nothing left to do
+
+            # Skip rows that are fully handled (disabled AND licenses removed AND groups removed). A row an
+            # earlier run disabled that is still waiting on licenses or groups falls through. A failed disable
+            # ("Error: ...") stays skipped so it gets looked at manually.
+            $disabledState = $user.'AD User Disabled'
+            if ($disabledState -match '\S' -and $disabledState -ne 'Y') { continue }
+            if ($disabledState -eq 'Y' -and $user.'Groups Removed' -match '\S' -and
+                $user.'Licenses Removed' -match '\S') { continue }
+
+            # Check actual AD state first - catches accounts disabled outside this script
+            # (manually, by another process, or before this script existed)
             try {
-                $upn = "$($user.Username)@$DefaultDomain"
-                $skuIds = (Get-MgUserLicenseDetail -UserId $upn -ErrorAction Stop).SkuId
-                if ($skuIds) {
-                    $null = Set-MgUserLicense -UserId $upn -AddLicenses @() -RemoveLicenses $skuIds -ErrorAction Stop
-                    $user.License = "Removed $(Get-Date -Format 'yyyy-MM-dd')"
-                }
+                $adAccount = Get-ADUser -Identity $user.Username -Properties Enabled, PrimaryGroup -ErrorAction Stop
             }
             catch {
-                Write-Warning "Failed to remove licenses for $target : $_"
+                Write-Warning "Could not look up AD account for $($user.Name) ($($user.Username)): $_"
+                continue
+            }
+
+            # Determine whether the end date has passed (needed either way, to decide on licenses)
+            $endDateExpired = $false
+            if (-not [string]::IsNullOrWhiteSpace($user.'End Date')) {
+                $rawDateValue = $user.'End Date'
+                if ($rawDateValue -isnot [string]) {
+                    Write-Warning "'End Date' for $($user.Name) is not a plain text value (found $($rawDateValue.GetType().Name)) - check for a duplicate 'End Date' column in the CSV. Skipping."
+                    continue
+                }
+
+                $knownFormats = @(
+                    'yyyy-MM-dd HH:mm:ss',   # format this script writes
+                    'M/d/yyyy H:mm',          # Excel short-date reformat (no seconds, no leading zeros)
+                    'M/d/yyyy HH:mm:ss'       # Excel reformat if seconds survive
+                )
+
+                $endDateParsed = $null
+                foreach ($fmt in $knownFormats) {
+                    try {
+                        $endDateParsed = [datetime]::ParseExact($rawDateValue, $fmt, [System.Globalization.CultureInfo]::InvariantCulture)
+                        break
+                    }
+                    catch {
+                        # try next format
+                    }
+                }
+
+                if (-not $endDateParsed) {
+                    Write-Warning "Could not parse End Date '$rawDateValue' for $($user.Name) - unrecognized format. Skipping."
+                    continue
+                }
+
+                $endDateExpired = $endDateParsed -lt (Get-Date)
+            }
+
+            if (-not $endDateExpired) {
+                # Not past its date - if already disabled some other way, just record that; no license action
+                if (-not $adAccount.Enabled) {
+                    $user.'AD User Disabled' = "Y"
+                }
+                continue
+            }
+
+            # Past its end date from here on - account should end up disabled AND licenses removed,
+            # regardless of whether AD disable already happened via another process
+            $target = "$($user.Name) ($($user.Username))"
+
+            if ($adAccount.Enabled) {
+                if ($PSCmdlet.ShouldProcess($target, "Disable AD account (end date $($user.'End Date') has passed)")) {
+                    try {
+                        Disable-ADAccount -Identity $user.Username -ErrorAction Stop
+                        $user.'AD User Disabled' = "Y"
+                    }
+                    catch {
+                        $user.'AD User Disabled' = "Error: $($_.Exception.Message)"
+                        Write-Warning "Failed to disable AD account for $target : $_"
+                        continue
+                    }
+
+                    # Record the disable on the ticket. A failed note doesn't undo the disable, so just warn.
+                    if (-not [string]::IsNullOrWhiteSpace($user.Ticket)) {
+                        $noteBody = "AD account disabled for $([System.Net.WebUtility]::HtmlEncode($user.Name)) ($($user.Username)).<br><br>" +
+                                    "Disabled: $(Get-Date -Format 'yyyy-MM-dd HH:mm') by $env:USERNAME<br>" +
+                                    "End date: $($user.'End Date')<br>"
+                        try { Add-TicketNote -Ticket $user.Ticket -Body $noteBody }
+                        catch { Write-Warning "AD account for $target was disabled, but adding the ticket note failed: $($_.Exception.Message)" }
+                    }
+                }
+                elseif (-not $WhatIfPreference) {
+                    continue  # user declined the prompt; don't touch licenses or groups either
+                }
+                # Under -WhatIf, fall through so the license and group steps are previewed too
+            }
+            else {
+                # Already disabled outside this script, but still past its date - record it
+                $user.'AD User Disabled' = "Y"
+            }
+
+            # Licenses - ask, then note, then remove. The license list goes on the ticket only after the
+            # operator says yes, and nothing is removed unless that note posted. Declined or failed rows
+            # stay blank and are asked again on the next run. A user with no licenses has nothing to ask
+            # about: a "No licenses assigned" note is posted and both columns are filled.
+            if ($user.'Licenses Removed' -notmatch '\S') {
+                try {
+                    $upn = "$($user.Username)@$DefaultDomain"
+                    $licenseDetail = @(Get-MgUserLicenseDetail -UserId $upn -ErrorAction Stop)
+                    $licenseNames  = @($licenseDetail | ForEach-Object { Get-FriendlyName $_.SkuPartNumber } | Sort-Object)
+                    if ($licenseNames.Count -ne $licenseDetail.Count) {
+                        throw "could not translate every license to a friendly name"
+                    }
+
+                    if ($licenseDetail.Count -eq 0) {
+                        if ($WhatIfPreference) {
+                            Write-Host "What if: $target has no M365 licenses; a 'No licenses assigned' note would be added to ticket $($user.Ticket)"
+                        }
+                        else {
+                            if ([string]::IsNullOrWhiteSpace($user.Ticket)) { throw "this row has no ticket number to record the license list on" }
+                            $noteBody = "License List for $([System.Net.WebUtility]::HtmlEncode($user.Name)) ($($user.Username)):<br><br>No licenses assigned.<br>"
+                            Add-TicketNote -Ticket $user.Ticket -Body $noteBody
+                            $user.'Licenses Noted'   = Get-Date -Format 'yyyy-MM-dd'
+                            $user.'Licenses Removed' = Get-Date -Format 'yyyy-MM-dd'   # nothing to remove
+                            Save-OffboardCsv
+                        }
+                    }
+                    elseif ($PSCmdlet.ShouldProcess($target, "Remove M365 licenses (end date $($user.'End Date') has passed)")) {
+                        # Step 1: on yes, the list goes on the ticket first (skipped if an earlier run already posted it)
+                        if ($user.'Licenses Noted' -notmatch '\S') {
+                            if ([string]::IsNullOrWhiteSpace($user.Ticket)) { throw "this row has no ticket number to record the license list on" }
+                            $noteBody = "License List for $([System.Net.WebUtility]::HtmlEncode($user.Name)) ($($user.Username)):<br><br>"
+                            foreach ($licenseName in $licenseNames) {
+                                $noteBody += [System.Net.WebUtility]::HtmlEncode($licenseName) + ";<br>"
+                            }
+                            Add-TicketNote -Ticket $user.Ticket -Body $noteBody
+                            $user.'Licenses Noted' = Get-Date -Format 'yyyy-MM-dd'
+                            Save-OffboardCsv   # checkpoint so the note isn't posted twice if the run is interrupted
+                        }
+
+                        # Step 2: remove (a failed note throws above, so this is only reached once the list is on the ticket)
+                        $null = Set-MgUserLicense -UserId $upn -AddLicenses @() -RemoveLicenses @($licenseDetail.SkuId) -ErrorAction Stop
+                        $user.'Licenses Removed' = Get-Date -Format 'yyyy-MM-dd'
+
+                        # Short confirmation note. A failed note doesn't undo the removal, so just warn.
+                        $noteBody = "M365 licenses removed for $([System.Net.WebUtility]::HtmlEncode($user.Name)) ($($user.Username)).<br><br>" +
+                                    "Removed $($licenseNames.Count) license(s) on $(Get-Date -Format 'yyyy-MM-dd HH:mm') by $env:USERNAME. " +
+                                    "The License List note on this ticket shows what they had.<br>"
+                        try { Add-TicketNote -Ticket $user.Ticket -Body $noteBody }
+                        catch { Write-Warning "Licenses for $target were removed, but adding the ticket note failed: $($_.Exception.Message)" }
+                    }
+                }
+                catch {
+                    Write-Warning "License handling did not complete for $target (if the ticket note failed, nothing was removed; it will be retried on the next run): $_"
+                }
+            }
+
+            # Groups - same pattern: ask, then note, then remove. Disabling an account doesn't take it out of
+            # its groups, so without this the user still shows up in mail lists and security groups. The
+            # primary group (Domain Users) can't be removed, so it is left out of the list and left alone.
+            # Declined or failed rows stay blank and are asked again on the next run.
+            if ($user.'Groups Removed' -notmatch '\S') {
+                try {
+                    $memberOf = @(Get-ADPrincipalGroupMembership -Identity $user.Username -ErrorAction Stop |
+                        Where-Object { $_.DistinguishedName -ne $adAccount.PrimaryGroup } |
+                        Sort-Object Name)
+
+                    if ($memberOf.Count -eq 0) {
+                        if ($WhatIfPreference) {
+                            Write-Host "What if: $target has no removable group memberships; a note saying so would be added to ticket $($user.Ticket)"
+                        }
+                        else {
+                            if ([string]::IsNullOrWhiteSpace($user.Ticket)) { throw "this row has no ticket number to record the group list on" }
+                            $noteBody = "Group List for $([System.Net.WebUtility]::HtmlEncode($user.Name)) ($($user.Username)):<br><br>No removable group memberships found.<br>"
+                            Add-TicketNote -Ticket $user.Ticket -Body $noteBody
+                            $user.'Groups Noted'   = Get-Date -Format 'yyyy-MM-dd'
+                            $user.'Groups Removed' = Get-Date -Format 'yyyy-MM-dd'   # nothing to remove
+                            Save-OffboardCsv
+                        }
+                    }
+                    elseif ($PSCmdlet.ShouldProcess($target, "Remove AD group memberships (end date $($user.'End Date') has passed)")) {
+                        # Step 1: on yes, the list goes on the ticket first (skipped if an earlier run already posted it).
+                        # Notes are HTML, so each group goes on its own line with <br> and names are HTML-encoded.
+                        if ($user.'Groups Noted' -notmatch '\S') {
+                            if ([string]::IsNullOrWhiteSpace($user.Ticket)) { throw "this row has no ticket number to record the group list on" }
+                            $noteBody = "Group List for $([System.Net.WebUtility]::HtmlEncode($user.Name)) ($($user.Username)):<br><br>"
+                            foreach ($group in $memberOf) {
+                                $noteBody += [System.Net.WebUtility]::HtmlEncode($group.Name) + ";<br>"
+                            }
+                            Add-TicketNote -Ticket $user.Ticket -Body $noteBody
+                            $user.'Groups Noted' = Get-Date -Format 'yyyy-MM-dd'
+                            Save-OffboardCsv   # checkpoint so the note isn't posted twice if the run is interrupted
+                        }
+
+                        # Step 2: remove (a failed note throws above, so this is only reached once the list is on the ticket).
+                        # One group at a time so a single failure (e.g. a protected group) doesn't stop the rest.
+                        $removedGroups = @()
+                        $failedGroups  = @()
+                        foreach ($group in $memberOf) {
+                            try {
+                                Remove-ADGroupMember -Identity $group -Members $user.Username -Confirm:$false -ErrorAction Stop
+                                $removedGroups += $group.Name
+                            }
+                            catch {
+                                $failedGroups += $group.Name
+                                Write-Warning "Could not remove $target from group '$($group.Name)': $($_.Exception.Message)"
+                            }
+                        }
+
+                        # Only mark the row done when nothing failed; otherwise the remaining groups are retried next run
+                        if ($failedGroups.Count -eq 0) { $user.'Groups Removed' = Get-Date -Format 'yyyy-MM-dd' }
+
+                        # Confirmation note (the full list was posted in step 1). Only when something was actually
+                        # removed, so a group that can never be removed doesn't add a note on every run.
+                        if ($removedGroups.Count -gt 0) {
+                            $noteBody = "AD group memberships removed for $([System.Net.WebUtility]::HtmlEncode($user.Name)) ($($user.Username)).<br><br>" +
+                                        "Removed from $($removedGroups.Count) group(s) on $(Get-Date -Format 'yyyy-MM-dd HH:mm') by $env:USERNAME. " +
+                                        "The Group List note on this ticket shows what they were in.<br>"
+                            if ($failedGroups.Count -gt 0) {
+                                $noteBody += "<br>Could not remove from these groups (will be retried on the next run):<br>"
+                                foreach ($groupName in $failedGroups) {
+                                    $noteBody += [System.Net.WebUtility]::HtmlEncode($groupName) + ";<br>"
+                                }
+                            }
+                            try { Add-TicketNote -Ticket $user.Ticket -Body $noteBody }
+                            catch { Write-Warning "Groups for $target were processed, but adding the ticket note failed: $($_.Exception.Message)" }
+                        }
+                    }
+                }
+                catch {
+                    Write-Warning "Group handling did not complete for $target (if the ticket note failed, nothing was removed; it will be retried on the next run): $_"
+                }
             }
         }
+    }
+    finally {
+        Save-OffboardCsv
     }
 }
 
@@ -541,6 +789,6 @@ if ($DisableExpired) {
 $users | Export-Csv -Path $Path -NoTypeInformation
 
 Write-Host "`n=== Offboard List Summary ===" -ForegroundColor Cyan
-$users | Select-Object Ticket, Name, Username, 'End Date', 'AD User Disabled', License | Format-Table -AutoSize
+$users | Select-Object -Property $columnOrder | Format-Table -AutoSize -Wrap
 
-Write-Host "`nDone! Tickets, usernames, and licenses updated in $Path" -ForegroundColor Green
+Write-Host "`nDone! Tickets, usernames, and offboarding progress updated in $Path" -ForegroundColor Green
