@@ -79,7 +79,10 @@
 
 param(
     [Parameter(Mandatory = $true)]
-    [string]$UserName
+    [string]$UserName,
+
+    # Skips both Read-Host prompts so the script can run in a hidden child process.
+    [switch]$Unattended
 )
 
 Import-Module ActiveDirectory
@@ -120,11 +123,13 @@ Write-Host "You are about to process:" -ForegroundColor Yellow
 Write-Host "$($adUser.SamAccountName)  ->  $($adUser.DisplayName)" -ForegroundColor Cyan
 Write-Host ""
 
-$confirm = Read-Host "Continue processing this user? (Y/N)"
+if (-not $Unattended) {
+    $confirm = Read-Host "Continue processing this user? (Y/N)"
 
-if ($confirm -notmatch '^(Y|YES)$') {
-    Write-Host "Operation cancelled." -ForegroundColor Yellow
-    return
+    if ($confirm -notmatch '^(Y|YES)$') {
+        Write-Host "Operation cancelled." -ForegroundColor Yellow
+        return
+    }
 }
 $hDriveSource = "AD"
 $hDriveUserPath = if ($adUser -and $adUser.HomeDirectory) {
@@ -134,7 +139,7 @@ $hDriveUserPath = if ($adUser -and $adUser.HomeDirectory) {
     Join-Path "\\ntdfs01\HDrive" $username
 }
 
-$logPath         = Join-Path $hrUserFolder "$((Get-Date).ToString('yyyy-MM-dd'))-Termination.log"
+$logPath         = Join-Path $hrUserFolder "$((Get-Date).ToString('yyyy-MM-dd_HHmmss'))-Termination.log"
 
 $script:OutcomeSummary = [ordered]@{}
 $script:HadErrors = $false
@@ -542,6 +547,10 @@ if ($failedOutcomes.Count -gt 0) {
     $script:HadErrors = $true
 }
 
+$finalStatus = if ($script:OutcomeSummary.Count -gt 0 -and $failedOutcomes.Count -eq 0) { 'Success' } else { 'Failed' }
+Write-Log "RESULT|$username|$finalStatus"
+Set-Content -LiteralPath (Join-Path $hrUserFolder 'Termination.result') -Value "$username,$finalStatus,$(Get-Date -Format s)"
+
 if ($failedOutcomes.Count -eq 0) {
     Write-Host "`n[SUCCESS] Offboarding completed for $username" -ForegroundColor Green
 }
@@ -557,7 +566,6 @@ else {
     Write-Host "Check the log for details: $logPath" -ForegroundColor Red
 }
 
-if ($script:HadErrors) {
+if ($script:HadErrors -and -not $Unattended) {
     Read-Host "`nErrors were encountered. Press Enter to exit"
 }
-
