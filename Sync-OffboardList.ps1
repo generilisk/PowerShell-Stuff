@@ -27,12 +27,15 @@ This is the combined pipeline for the offboarding tracker at $Path:
    - Groups: same pattern - asks, posts the group list as a private note so whoever takes over
      the role can see which groups to assign ('Groups Noted'), and only if the note posts
      removes the AD group memberships ('Groups Removed'). The primary group is left alone.
+   - Files: asks, then runs Remove-OffboardUserData.ps1 under an admin account you are prompted
+     for (backs up and removes the profile folders and H Drive), and records the date in
+     'Profile Folder Work' only if the HR result file shows success.
    Anything declined or failed stays blank and is asked again on the next run.
 5. Saves the CSV and prints a summary table of every row.
 
-The CSV columns are kept in workflow order. The last three ('Profile Folder Work', 'AD User
-Deleted', 'Ticket Closed') are filled in by hand or by other scripts: the user's files are
-backed up first, then the AD account is deleted, and the ticket is closed last.
+The CSV columns are kept in workflow order. The last two ('AD User
+Deleted', 'Ticket Closed') are filled in by hand or by other scripts: the AD account is deleted
+once the user's files are backed up, and the ticket is closed last.
 
 If the Freshservice call fails, the script warns and proceeds to step 3 using whatever rows
 already exist in the CSV, rather than aborting - but -DisableExpired is skipped for that run,
@@ -73,8 +76,15 @@ private note, and the removal only happens if that note posts successfully.
 Use -WhatIf to preview affected users with no changes made.
 Each AD disable, license removal, and group removal also adds a private note to the user's
 ticket (what was done, when, and by whom).
+After those, runs the user file cleanup (Remove-OffboardUserData.ps1) under an admin account you
+are prompted for, and records the date in 'Profile Folder Work' if it succeeds.
 If the Freshservice pull fails, or Microsoft Graph can't be reached, -DisableExpired is
 skipped for that run (nothing is disabled or removed).
+
+.PARAMETER HrArchiveRoot
+The HR folder where Remove-OffboardUserData.ps1 archives each user's files. After the cleanup
+runs, the script reads <HrArchiveRoot>\<username>\Termination.result to confirm it succeeded.
+Must match $hrRoot in Remove-OffboardUserData.ps1.
 
 .EXAMPLE
 .\Sync-OffboardList.ps1 -Path "H:\offboard\Progress.csv" -TicketStatus 3
@@ -119,12 +129,15 @@ param (
     [string]$SubCategory = "Off-board",
 
     [Parameter()]
-    [switch]$DisableExpired
+    [switch]$DisableExpired,
+
+    [Parameter()]
+    [string]$HrArchiveRoot = "\\shared01\hr\_HR Shared\TERMINATION\Termed employee files"
 )
 
 
 # ============================================================
-# PART 0: First-run prerequisites (skips anything already present)
+# PART 1: First-run prerequisites (skips anything already present)
 # ============================================================
 
 # Active Directory PowerShell module (RSAT). This is a Windows feature, so adding it
@@ -221,7 +234,7 @@ if (-not (Test-Path -Path $Path)) {
 }
 
 # ============================================================
-# PART 1: Pull new Off-board tickets from Freshservice and append to CSV
+# PART 2: Pull new Off-board tickets from Freshservice and append to CSV
 # ============================================================
 
 $freshserviceOk = $false   # set to $true only if the whole Freshservice pull succeeds; gates -DisableExpired
@@ -330,7 +343,7 @@ catch {
 }
 
 # ============================================================
-# PART 2a: Resolve usernames via Active Directory
+# PART 3: Resolve usernames via Active Directory
 # ============================================================
 
 Import-Module ActiveDirectory -ErrorAction Stop
@@ -441,7 +454,7 @@ foreach ($user in $users) {
 }
 
 # ============================================================
-# PART 2b: Manual entry for any names that couldn't be resolved
+# PART 4: Manual entry for any names that couldn't be resolved
 # ============================================================
 # A typed username is checked against AD, and the operator confirms the account it belongs to
 # before it is used. A typo that happens to be a real account would otherwise point every later
@@ -500,7 +513,7 @@ if ($users.Count -gt 0) {
 # Helper: add a private note to a Freshservice ticket. Throws on failure so each caller decides
 # how to report it. Notes are HTML (plain line breaks are ignored), so callers build the body
 # with <br>. Sent as JSON (works in Windows PowerShell 5.1 and 7; -Form needs PowerShell 7).
-# $headers already holds the API authorization from Part 1.
+# $headers already holds the API authorization from Part 2.
 function Add-TicketNote {
     param(
         [Parameter(Mandatory)][string]$Ticket,
@@ -512,7 +525,7 @@ function Add-TicketNote {
         -ContentType 'application/json; charset=utf-8' -Body $payload -ErrorAction Stop
 }
 
-# Helper: save the CSV now instead of waiting for Part 4. Used as a checkpoint so that notes already
+# Helper: save the CSV now instead of waiting for Part 8. Used as a checkpoint so that notes already
 # posted and accounts already changed are remembered even if the run is interrupted. Skipped under
 # -WhatIf, and a save failure (e.g. the CSV is open in Excel) only warns.
 function Save-OffboardCsv {
@@ -521,11 +534,26 @@ function Save-OffboardCsv {
     catch { Write-Warning "Could not save progress to $Path (is it open in another program?): $($_.Exception.Message)" }
 }
 
+# Helper: converts S:\foo to \\server\share\foo when S: is a mapped drive. The admin account's
+# logon session doesn't have this user's mapped drives, so the child must be given a UNC path.
+function Resolve-UncPath {
+    param([string]$Path)
+    $full = (Resolve-Path -LiteralPath $Path).ProviderPath
+    $root = [System.IO.Path]::GetPathRoot($full)
+    if ($root -match '^([A-Za-z]):\\$') {
+        $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$($Matches[1]):'"
+        if ($disk -and $disk.ProviderName) {
+            return (Join-Path $disk.ProviderName $full.Substring($root.Length))
+        }
+    }
+    return $full
+}
+
 # Checkpoint: keep the resolved usernames and the new column order even if the run is interrupted later
 Save-OffboardCsv
 
 # ============================================================
-# PART 3: Microsoft Graph connection (only needed for -DisableExpired)
+# PART 5: Microsoft Graph connection (only needed for -DisableExpired)
 # ============================================================
 
 # Destructive actions only run when the Freshservice pull fully succeeded and Graph is reachable
@@ -537,7 +565,7 @@ if ($runDisable -and -not (Connect-LicenseGraph -IncludeWrite)) {
 }
 
 # ============================================================
-# PART 3.5: Disable AD account, remove licenses and groups for expired end dates
+# PART 6: Disable AD account, remove licenses and groups for expired end dates
 # ============================================================
 
 if ($runDisable) {
@@ -783,7 +811,93 @@ if ($runDisable) {
 }
 
 # ============================================================
-# PART 4: Save + summary output (all users, not just errors)
+# PART 7: User file cleanup (runs Remove-OffboardUserData.ps1 under the admin account)
+# ============================================================
+
+if ($runDisable) {
+    try {
+        # Ready for file cleanup: disabled, licenses and groups handled, files not yet done
+        $cleanupRows = @($users | Where-Object {
+            $_.Username -match '\S' -and
+            $_.'AD User Disabled' -eq 'Y' -and
+            $_.'Licenses Removed' -match '\S' -and
+            $_.'Groups Removed' -match '\S' -and
+            $_.'Profile Folder Work' -notmatch '\S' -and
+            $_.'AD User Deleted' -notmatch '\S'
+        })
+
+        # Ask per user first, so the admin credential is only requested if there is work to do
+        $approved = @()
+        foreach ($user in $cleanupRows) {
+            $target = "$($user.Name) ($($user.Username))"
+            if ($PSCmdlet.ShouldProcess($target, "Back up and delete profile folders and H Drive")) {
+                $approved += $user
+            }
+        }
+
+        if ($approved.Count -gt 0) {
+            $cleanupScript = Join-Path (Resolve-UncPath $PSScriptRoot) 'Remove-OffboardUserData.ps1'
+            if (-not (Test-Path -LiteralPath $cleanupScript)) { throw "Cannot find $cleanupScript" }
+
+            $adminCred = Get-Credential -Message 'Admin account for the file cleanup' -UserName "$env:USERDOMAIN\"
+            if (-not $adminCred) { throw 'No admin credential supplied.' }
+
+            foreach ($user in $approved) {
+                $target   = "$($user.Name) ($($user.Username))"
+                $launched = (Get-Date).AddSeconds(-1)
+                $argList  = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$cleanupScript`"",
+                              '-UserName', $user.Username, '-Unattended')
+                try {
+                    Write-Host "Running file cleanup for $target ..."
+                    # The exit code isn't reliable with -Credential; the result file is the signal.
+                    $null = Start-Process -FilePath 'powershell.exe' -ArgumentList $argList -Credential $adminCred `
+                        -WorkingDirectory "$env:SystemRoot\System32" -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop
+                }
+                catch {
+                    # Stop here rather than retrying a rejected credential for every remaining user
+                    Write-Warning "Could not start the file cleanup for ${target}: $($_.Exception.Message). Remaining users were skipped."
+                    break
+                }
+
+                # Trust only a result file written after this launch, for this user, that says Success
+                $userFolder = Join-Path $HrArchiveRoot $user.Username
+                $resultFile = Join-Path $userFolder 'Termination.result'
+                $status = $null
+                if (Test-Path -LiteralPath $resultFile) {
+                    $parts = @((Get-Content -LiteralPath $resultFile -TotalCount 1) -split ',')
+                    $stamp = [datetime]::MinValue
+                    if ($parts.Count -ge 3 -and $parts[0] -eq $user.Username -and
+                        [datetime]::TryParse($parts[2], [ref]$stamp) -and $stamp -ge $launched) {
+                        $status = $parts[1]
+                    }
+                }
+
+                if ($status -eq 'Success') {
+                    $user.'Profile Folder Work' = Get-Date -Format 'yyyy-MM-dd'
+                    Save-OffboardCsv
+                    try {
+                        $noteBody = "User files processed for $([System.Net.WebUtility]::HtmlEncode($user.Name)) ($($user.Username)).<br><br>" +
+                                    "Profile folders and H Drive were backed up to the HR termination folder where needed and removed from the network shares on $(Get-Date -Format 'yyyy-MM-dd HH:mm') by $env:USERNAME.<br>"
+                        Add-TicketNote -Ticket $user.Ticket -Body $noteBody
+                    }
+                    catch { Write-Warning "File cleanup for $target succeeded, but adding the ticket note failed: $($_.Exception.Message)" }
+                }
+                else {
+                    Write-Warning "File cleanup did not report success for $target. 'Profile Folder Work' left blank; check the newest *-Termination.log in $userFolder"
+                }
+            }
+        }
+    }
+    catch {
+        Write-Warning "File cleanup step did not complete: $_"
+    }
+    finally {
+        Save-OffboardCsv
+    }
+}
+
+# ============================================================
+# PART 8: Save + summary output (all users, not just errors)
 # ============================================================
 
 $users | Export-Csv -Path $Path -NoTypeInformation
