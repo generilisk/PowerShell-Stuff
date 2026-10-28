@@ -1,8 +1,9 @@
 <#
 .SYNOPSIS
 Pulls open Off-board tickets from Freshservice, appends any new employees found in their
-requested items to a tracking CSV, resolves usernames via Active Directory, and (with
--DisableExpired) carries out the offboarding steps for everyone past their end date.
+requested items to a tracking CSV, takes each username from the ticket and verifies it in
+Active Directory, and (with -DisableExpired) carries out the offboarding steps for everyone
+past their end date.
 
 .DESCRIPTION
 If $Path does not exist, the script creates it (and its containing folder, if needed)
@@ -13,11 +14,12 @@ This is the combined pipeline for the offboarding tracker at $Path:
 1. Queries Freshservice for tickets matching $TicketStatus, $Category, and $SubCategory.
 2. Pulls requested_items for each matching ticket and extracts every employee_name*
    custom field. Any Ticket+Name pair not already present in the CSV is appended as a new
-   row, with all other columns left blank. Existing rows and columns are never overwritten
-   or cleared.
-3. Reloads the full CSV and resolves the 'Username' column via Active Directory for any row
-   still missing one - exact DisplayName match, then 'Last, First', then GivenName+Surname
-   concatenation, then interactive fuzzy match, then manual entry as a last resort.
+   row, with all other columns left blank (the username typed on the ticket form is
+   remembered for step 3). Existing rows and columns are never overwritten or cleared.
+3. Reloads the full CSV and fills the 'Username' column, for any row still missing one, from
+   the username on the ticket. It is used when AD confirms the account exists and the name
+   matches ('First Last' or 'Last, First'); a mismatch shows the AD account and asks first.
+   Anything still blank is entered manually and confirmed against AD.
 4. Past each user's end date (-DisableExpired only), carries out the offboarding steps, each
    one recorded in its own CSV column:
    - Disables the AD account ('AD User Disabled').
@@ -30,12 +32,16 @@ This is the combined pipeline for the offboarding tracker at $Path:
    - Files: asks, then runs Remove-OffboardUserData.ps1 under an admin account you are prompted
      for (backs up and removes the profile folders and H Drive), and records the date in
      'Profile Folder Work' only if the HR result file shows success.
+   - Deletes the AD account ('AD User Deleted') once everything above is done, after checking
+     in AD that it is still disabled and showing its display name, title, and OU to confirm.
+   - Closes the ticket ('Ticket Closed'), with a resolution note, once every person listed on
+     it has been deleted and every task on the ticket (e.g. IT Security's) is Completed.
    Anything declined or failed stays blank and is asked again on the next run.
 5. Saves the CSV and prints a summary table of every row.
 
-The CSV columns are kept in workflow order. The last two ('AD User
-Deleted', 'Ticket Closed') are filled in by hand or by other scripts: the AD account is deleted
-once the user's files are backed up, and the ticket is closed last.
+The CSV columns are kept in workflow order. Every column is
+filled in by this script: the user's files are backed up first, then the AD account is deleted,
+and the ticket is closed last.
 
 If the Freshservice call fails, the script warns and proceeds to step 3 using whatever rows
 already exist in the CSV, rather than aborting - but -DisableExpired is skipped for that run,
@@ -78,6 +84,7 @@ Each AD disable, license removal, and group removal also adds a private note to 
 ticket (what was done, when, and by whom).
 After those, runs the user file cleanup (Remove-OffboardUserData.ps1) under an admin account you
 are prompted for, and records the date in 'Profile Folder Work' if it succeeds.
+Then deletes the AD account and, once everyone listed on a ticket has been deleted, closes the ticket.
 If the Freshservice pull fails, or Microsoft Graph can't be reached, -DisableExpired is
 skipped for that run (nothing is disabled or removed).
 
@@ -243,6 +250,8 @@ $pair = "$FreshserviceApiKey`:X"
 $encoded = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pair))
 $headers = @{ Authorization = "Basic $encoded" }
 
+$ticketUsernames = @{}   # 'ticket|name' -> username typed on the ticket form; checked against AD in Part 3
+
 try {
     $baseUrl = "https://schc.freshservice.com/api/v2/tickets/filter"
     $queryString = "status:$TicketStatus"
@@ -309,6 +318,13 @@ try {
                     $endDate = ""
                 }
 
+                # Username typed on the form: employee_username, or employee_username_2 etc. for extra people
+                $suffix = if ($dateIndex -eq 1) { '' } else { "_$dateIndex" }
+                $ticketUsername = $cf."employee_username$suffix"
+                if (-not [string]::IsNullOrWhiteSpace($ticketUsername)) {
+                    $ticketUsernames[$key] = "$ticketUsername".Trim()
+                }
+
                 if (-not $existingKeys.ContainsKey($key)) {
                     $row = [ordered]@{}
                     foreach ($col in $csvColumns) {
@@ -343,7 +359,7 @@ catch {
 }
 
 # ============================================================
-# PART 3: Resolve usernames via Active Directory
+# PART 3: Take usernames from the tickets and verify them in Active Directory
 # ============================================================
 
 Import-Module ActiveDirectory -ErrorAction Stop
@@ -359,11 +375,10 @@ catch {
     return
 }
 
-# Properties used to tell people apart in the pick lists below
-$adProps = 'GivenName', 'Surname', 'DisplayName', 'sAMAccountName', 'Title', 'Department', 'Enabled'
-$adUserCache = Get-ADUser -Filter { GivenName -like "*" -and Surname -like "*" } -Properties $adProps
+# Properties shown when confirming an account
+$adProps = 'DisplayName', 'sAMAccountName', 'Title', 'Department', 'Enabled'
 
-# Helper: one-line description of an AD account, so similar names can be told apart
+# Helper: one-line description of an AD account, so it can be checked against the ticket
 function Format-AdUserChoice {
     param($AdUser)
     $details = @($AdUser.Title, $AdUser.Department) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
@@ -371,27 +386,6 @@ function Format-AdUserChoice {
     $text    = "$($AdUser.DisplayName) [$($AdUser.sAMAccountName)]"
     if ($details) { $text += " - $($details -join ', ')" }
     return "$text - $status"
-}
-
-# Helper: show a numbered list and let the operator pick one.
-# Returns the chosen AD account, or $null if they skip or enter something invalid.
-function Select-AdUserMatch {
-    param([string]$Name, $Candidates, [string]$Heading)
-    Write-Host "`n$Heading '$Name':" -ForegroundColor Yellow
-    $i = 1
-    foreach ($candidate in $Candidates) {
-        Write-Host "$i. $(Format-AdUserChoice $candidate)"
-        $i++
-    }
-    $choice = Read-Host "Enter the number of the correct user, or press Enter to skip"
-    if ([string]::IsNullOrWhiteSpace($choice) -or $choice -notmatch '^\d+$') {
-        Write-Host "Skipped."
-        return $null
-    }
-    $index = [int]$choice - 1
-    if ($index -ge 0 -and $index -lt $Candidates.Count) { return $Candidates[$index] }
-    Write-Host "Invalid choice. Skipped."
-    return $null
 }
 
 # Helper: does a ticket name ("First Last") match an AD DisplayName ("First Last" or "Last, First")?
@@ -404,53 +398,33 @@ function Test-NameMatchesDisplayName {
     return $false
 }
 
+# The username comes from the ticket form. It is used only if AD agrees about who that is: a typo
+# that happens to be a real account would otherwise point every later step (notes, disable,
+# license and group removal, deletion) at the wrong person. Anything left blank goes to Part 4.
 foreach ($user in $users) {
     $name = $user.Name.Trim()
-    $username = $user.Username
 
-    if (![string]::IsNullOrWhiteSpace($username)) {
+    if (![string]::IsNullOrWhiteSpace($user.Username)) { continue }
+
+    $ticketUsername = $ticketUsernames["$($user.Ticket)|$($user.Name)"]
+    if ([string]::IsNullOrWhiteSpace($ticketUsername)) {
+        Write-Warning "Ticket $($user.Ticket) has no username for '$name'."
         continue
     }
 
-    # Look for exact matches: DisplayName, then "Last, First", then GivenName + Surname.
-    # Exactly one match is used automatically. MORE than one is ambiguous, so a person always picks:
-    # guessing wrong here would put the wrong person's groups on the ticket and could disable them.
-    $exactMatches = @(Get-ADUser -Filter { DisplayName -eq $name } -Properties $adProps)
-
-    if ($exactMatches.Count -eq 0 -and $name -match '^\S+\s+\S+$') {
-        $parts = $name -split '\s+'
-        $reversedName = "$($parts[1]), $($parts[0])"
-        $exactMatches = @(Get-ADUser -Filter { DisplayName -eq $reversedName } -Properties $adProps)
+    $fromTicket = Get-ADUser -Filter { SamAccountName -eq $ticketUsername } -Properties $adProps
+    if (-not $fromTicket) {
+        Write-Warning "Ticket $($user.Ticket) lists username '$ticketUsername' for '$name', but no such account exists in AD."
     }
-
-    if ($exactMatches.Count -eq 0) {
-        $exactMatches = @($adUserCache | Where-Object {
-            "$($_.GivenName) $($_.Surname)".Trim() -eq $name
-        })
+    elseif (Test-NameMatchesDisplayName -TicketName $name -DisplayName $fromTicket.DisplayName) {
+        $user.Username = $fromTicket.sAMAccountName
     }
-
-    if ($exactMatches.Count -eq 1) {
-        $user.Username = $exactMatches[0].sAMAccountName
-        continue
+    else {
+        Write-Host "`nTicket $($user.Ticket) lists username '$ticketUsername' for '$name', but AD has:" -ForegroundColor Yellow
+        Write-Host "  $(Format-AdUserChoice $fromTicket)"
+        $answer = Read-Host "Use this account for '$name'? (Y/N)"
+        if ($answer -match '^(Y|YES)$') { $user.Username = $fromTicket.sAMAccountName }
     }
-
-    if ($exactMatches.Count -gt 1) {
-        $selected = Select-AdUserMatch -Name $name -Candidates $exactMatches -Heading "More than one Active Directory account matches"
-        $user.Username = if ($selected) { $selected.sAMAccountName } else { "" }
-        continue
-    }
-
-    # No exact match: offer partial matches
-    $potentialMatches = @(Get-ADUser -Filter { DisplayName -like "*$name*" } -Properties $adProps)
-
-    if ($potentialMatches.Count -eq 0) {
-        Write-Host "No Active Directory match found for '$name'."
-        $user.Username = ""
-        continue
-    }
-
-    $selected = Select-AdUserMatch -Name $name -Candidates $potentialMatches -Heading "Possible matches for"
-    $user.Username = if ($selected) { $selected.sAMAccountName } else { "" }
 }
 
 # ============================================================
@@ -462,7 +436,7 @@ foreach ($user in $users) {
 foreach ($user in $users) {
     if (-not [string]::IsNullOrWhiteSpace($user.Username)) { continue }
 
-    Write-Host "`nUnable to automatically resolve a username for '$($user.Name)'." -ForegroundColor Yellow
+    Write-Host "`nNo confirmed username for '$($user.Name)'." -ForegroundColor Yellow
 
     while ($true) {
         $manualEntry = Read-Host "Enter the correct username, or press Enter to skip this user"
@@ -525,7 +499,48 @@ function Add-TicketNote {
         -ContentType 'application/json; charset=utf-8' -Body $payload -ErrorAction Stop
 }
 
-# Helper: save the CSV now instead of waiting for Part 8. Used as a checkpoint so that notes already
+# Helper: close a Freshservice ticket (status 5) and set its resolution note in the same update.
+# Uses the plain-text resolution_notes field (the _html variant has been reported to error).
+# Throws on failure, using the API's own error message when it gives one, so the caller can warn
+# and leave 'Ticket Closed' blank.
+function Close-Ticket {
+    param(
+        [Parameter(Mandatory)][string]$Ticket,
+        [Parameter(Mandatory)][string]$ResolutionNote
+    )
+    $ticketUri = "https://schc.freshservice.com/api/v2/tickets/$Ticket"
+    $payload   = @{ status = 5; resolution_notes = $ResolutionNote } | ConvertTo-Json
+    try {
+        $null = Invoke-RestMethod -Uri $ticketUri -Method Put -Headers $headers `
+            -ContentType 'application/json; charset=utf-8' -Body $payload -ErrorAction Stop
+
+        # A 200 reply doesn't prove the change was applied (Freshservice has been reported to accept
+        # updates on service requests without applying them), so check how the ticket looks now.
+        $check = Invoke-RestMethod -Uri $ticketUri -Method Get -Headers $headers -ErrorAction Stop
+    }
+    catch {
+        $detail = if ($_.ErrorDetails.Message) { $_.ErrorDetails.Message } else { $_.Exception.Message }
+        throw $detail
+    }
+
+    if ($check.ticket.status -ne 5) {
+        throw "Freshservice accepted the update, but the ticket's status is still $($check.ticket.status) (not 5, Closed)."
+    }
+    if ([string]::IsNullOrWhiteSpace($check.ticket.resolution_notes)) {
+        Write-Warning "Ticket $Ticket is closed, but its resolution notes are empty."
+    }
+}
+
+# Helper: returns the tasks on a ticket that are not yet Completed (task status 1 = Open,
+# 2 = In Progress, 3 = Completed). Freshservice will not close a ticket while any are outstanding.
+function Get-OpenTicketTasks {
+    param([Parameter(Mandatory)][string]$Ticket)
+    $response = Invoke-RestMethod -Uri "https://schc.freshservice.com/api/v2/tickets/$Ticket/tasks" `
+        -Method Get -Headers $headers -ErrorAction Stop
+    return @($response.tasks | Where-Object { -not $_.deleted -and $_.status -ne 3 })
+}
+
+# Helper: save the CSV now instead of waiting for Part 10. Used as a checkpoint so that notes already
 # posted and accounts already changed are remembered even if the run is interrupted. Skipped under
 # -WhatIf, and a save failure (e.g. the CSV is open in Excel) only warns.
 function Save-OffboardCsv {
@@ -839,7 +854,7 @@ if ($runDisable) {
             $cleanupScript = Join-Path (Resolve-UncPath $PSScriptRoot) 'Remove-OffboardUserData.ps1'
             if (-not (Test-Path -LiteralPath $cleanupScript)) { throw "Cannot find $cleanupScript" }
 
-            $adminCred = Get-Credential -Message 'Admin account for the file cleanup' -UserName "$env:USERDOMAIN\"
+            $adminCred = Get-Credential -Message "Admin account for the file cleanup (enter it as $env:USERDOMAIN\username)"
             if (-not $adminCred) { throw 'No admin credential supplied.' }
 
             foreach ($user in $approved) {
@@ -856,6 +871,7 @@ if ($runDisable) {
                 catch {
                     # Stop here rather than retrying a rejected credential for every remaining user
                     Write-Warning "Could not start the file cleanup for ${target}: $($_.Exception.Message). Remaining users were skipped."
+                    Write-Warning "Detail: $($_.Exception.GetType().FullName), HResult $($_.Exception.HResult), host $($Host.Name), PowerShell $($PSVersionTable.PSVersion), as $([Security.Principal.WindowsIdentity]::GetCurrent().Name)"
                     break
                 }
 
@@ -897,7 +913,132 @@ if ($runDisable) {
 }
 
 # ============================================================
-# PART 8: Save + summary output (all users, not just errors)
+# PART 8: Delete the AD account once everything else is done
+# ============================================================
+
+if ($runDisable) {
+    try {
+        # Ready for deletion: disabled, licenses and groups handled, files backed up, not yet deleted
+        $deleteRows = @($users | Where-Object {
+            $_.Username -match '\S' -and
+            $_.'AD User Disabled' -eq 'Y' -and
+            $_.'Licenses Removed' -match '\S' -and
+            $_.'Groups Removed' -match '\S' -and
+            $_.'Profile Folder Work' -match '\S' -and
+            $_.'AD User Deleted' -notmatch '\S'
+        })
+
+        foreach ($user in $deleteRows) {
+            $target = "$($user.Name) ($($user.Username))"
+
+            # Look at the account as it is now, not as the CSV remembers it
+            $adUser = $null
+            $gone   = $false
+            try { $adUser = Get-ADUser -Identity $user.Username -Properties Enabled, DisplayName, Title -ErrorAction Stop }
+            catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] { $gone = $true }
+            catch {
+                Write-Warning "Could not look up $target in AD, so it was not deleted: $($_.Exception.Message)"
+                continue
+            }
+
+            if ($gone) {
+                # Already deleted by some other means: record it so the ticket can still be closed
+                if (-not $WhatIfPreference) {
+                    Write-Warning "$target no longer exists in AD; recording it as deleted."
+                    $user.'AD User Deleted' = Get-Date -Format 'yyyy-MM-dd'
+                    Save-OffboardCsv
+                }
+                continue
+            }
+
+            if ($adUser.Enabled) {
+                Write-Warning "$target is still enabled in AD, so it was not deleted."
+                continue
+            }
+
+            # The prompt shows what AD has next to what the ticket said, so a wrong match is visible here
+            $ou = ($adUser.DistinguishedName -split ',', 2)[1]
+            if ($PSCmdlet.ShouldProcess("$target - AD: $($adUser.DisplayName), $($adUser.Title), $ou",
+                    "DELETE the AD account (all other offboarding steps are done)")) {
+                try {
+                    Remove-ADUser -Identity $adUser -Confirm:$false -ErrorAction Stop
+                    $user.'AD User Deleted' = Get-Date -Format 'yyyy-MM-dd'
+                    Save-OffboardCsv   # checkpoint right away: the account is gone
+                    try {
+                        $noteBody = "AD account deleted for $([System.Net.WebUtility]::HtmlEncode($user.Name)) ($($user.Username)).<br><br>" +
+                                    "Deleted on $(Get-Date -Format 'yyyy-MM-dd HH:mm') by $env:USERNAME, after the licenses, groups, and user files were handled.<br>"
+                        Add-TicketNote -Ticket $user.Ticket -Body $noteBody
+                    }
+                    catch { Write-Warning "$target was deleted, but adding the ticket note failed: $($_.Exception.Message)" }
+                }
+                catch { Write-Warning "Could not delete ${target}: $($_.Exception.Message)" }
+            }
+        }
+    }
+    catch {
+        Write-Warning "AD account deletion did not complete: $_"
+    }
+    finally {
+        Save-OffboardCsv
+    }
+}
+
+# ============================================================
+# PART 9: Close the ticket once everyone on it has been deleted
+# ============================================================
+
+if ($runDisable) {
+    try {
+        $closeRows = @($users | Where-Object {
+            $_.Ticket -match '\S' -and
+            $_.'AD User Deleted' -match '\S' -and
+            $_.'Ticket Closed' -notmatch '\S'
+        })
+
+        foreach ($ticketNumber in @($closeRows | Select-Object -ExpandProperty Ticket -Unique)) {
+            $ticketRows = @($users | Where-Object { $_.Ticket -eq $ticketNumber })
+
+            # Older tickets can list several people (and some may still be unresolved or waiting):
+            # only close once every row on the ticket has been deleted
+            if (@($ticketRows | Where-Object { $_.'AD User Deleted' -notmatch '\S' }).Count -gt 0) { continue }
+
+            # The ticket also has task(s) for other teams (e.g. IT Security) that must be Completed first.
+            # Not an error: the ticket is simply checked again on the next run.
+            try { $openTasks = @(Get-OpenTicketTasks -Ticket $ticketNumber) }
+            catch {
+                Write-Warning "Could not check the tasks on ticket ${ticketNumber}, so it was left open: $($_.Exception.Message)"
+                continue
+            }
+            if ($openTasks.Count -gt 0) {
+                Write-Host "Ticket $ticketNumber is waiting on $($openTasks.Count) open task(s): $(($openTasks | ForEach-Object { $_.title }) -join '; '). It will be checked again on the next run." -ForegroundColor Yellow
+                continue
+            }
+
+            if ($PSCmdlet.ShouldProcess("ticket $ticketNumber", "Close the Freshservice ticket (all offboarding steps are done)")) {
+                try {
+                    $who = ($ticketRows | ForEach-Object { "$($_.Name) ($($_.Username))" }) -join ', '
+                    $resolution = "Offboarding complete for $who. All steps are done: AD account disabled, licenses and groups removed, " +
+                                  "user files backed up and removed from the network shares, and AD account deleted. " +
+                                  "Closed by $env:USERNAME on $(Get-Date -Format 'yyyy-MM-dd')."
+                    Close-Ticket -Ticket $ticketNumber -ResolutionNote $resolution
+                    $closedOn = Get-Date -Format 'yyyy-MM-dd'
+                    foreach ($row in $ticketRows) { $row.'Ticket Closed' = $closedOn }
+                    Save-OffboardCsv
+                }
+                catch { Write-Warning "Could not close ticket ${ticketNumber} (left open; 'Ticket Closed' stays blank): $_" }
+            }
+        }
+    }
+    catch {
+        Write-Warning "Ticket closure did not complete: $_"
+    }
+    finally {
+        Save-OffboardCsv
+    }
+}
+
+# ============================================================
+# PART 10: Save + summary output (all users, not just errors)
 # ============================================================
 
 $users | Export-Csv -Path $Path -NoTypeInformation
