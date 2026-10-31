@@ -499,20 +499,32 @@ function Add-TicketNote {
         -ContentType 'application/json; charset=utf-8' -Body $payload -ErrorAction Stop
 }
 
-# Helper: close a Freshservice ticket (status 5) and set its resolution note in the same update.
-# Uses the plain-text resolution_notes field (the _html variant has been reported to error).
-# Throws on failure, using the API's own error message when it gives one, so the caller can warn
-# and leave 'Ticket Closed' blank.
+# Helper: write the resolution and close a Freshservice ticket (status 5). On this account's form the
+# Resolution box is a custom field ('resolution' inside custom_fields), not the built-in
+# resolution_notes. It is saved first, then the ticket is closed, so a failed close leaves the
+# resolution in place (rewriting it on the next run is harmless). A blank description, which
+# Freshservice requires to close, is filled in too. Throws on failure, using the
+# API's own error message when it gives one, so the caller can warn and leave 'Ticket Closed' blank.
 function Close-Ticket {
     param(
         [Parameter(Mandatory)][string]$Ticket,
-        [Parameter(Mandatory)][string]$ResolutionNote
+        [Parameter(Mandatory)][string]$ResolutionNote,
+        [Parameter(Mandatory)][string]$Description
     )
-    $ticketUri = "https://schc.freshservice.com/api/v2/tickets/$Ticket"
-    $payload   = @{ status = 5; resolution_notes = $ResolutionNote } | ConvertTo-Json
+    $ticketUri    = "https://schc.freshservice.com/api/v2/tickets/$Ticket"
+    $closePayload = @{ status = 5 } | ConvertTo-Json
     try {
+        # Freshservice won't close a ticket whose description is blank, and tickets made from the form
+        # have none. Fill it in only when it is blank, so a real description is never overwritten.
+        $current = Invoke-RestMethod -Uri $ticketUri -Method Get -Headers $headers -ErrorAction Stop
+        $fields  = @{ custom_fields = @{ resolution = $ResolutionNote } }
+        if ([string]::IsNullOrWhiteSpace($current.ticket.description_text)) { $fields.description = $Description }
+        $resolutionPayload = $fields | ConvertTo-Json -Depth 3
+
         $null = Invoke-RestMethod -Uri $ticketUri -Method Put -Headers $headers `
-            -ContentType 'application/json; charset=utf-8' -Body $payload -ErrorAction Stop
+            -ContentType 'application/json; charset=utf-8' -Body $resolutionPayload -ErrorAction Stop
+        $null = Invoke-RestMethod -Uri $ticketUri -Method Put -Headers $headers `
+            -ContentType 'application/json; charset=utf-8' -Body $closePayload -ErrorAction Stop
 
         # A 200 reply doesn't prove the change was applied (Freshservice has been reported to accept
         # updates on service requests without applying them), so check how the ticket looks now.
@@ -526,8 +538,8 @@ function Close-Ticket {
     if ($check.ticket.status -ne 5) {
         throw "Freshservice accepted the update, but the ticket's status is still $($check.ticket.status) (not 5, Closed)."
     }
-    if ([string]::IsNullOrWhiteSpace($check.ticket.resolution_notes)) {
-        Write-Warning "Ticket $Ticket is closed, but its resolution notes are empty."
+    if ([string]::IsNullOrWhiteSpace($check.ticket.custom_fields.resolution)) {
+        Write-Warning "Ticket $Ticket is closed, but its Resolution field is empty."
     }
 }
 
@@ -1017,10 +1029,11 @@ if ($runDisable) {
             if ($PSCmdlet.ShouldProcess("ticket $ticketNumber", "Close the Freshservice ticket (all offboarding steps are done)")) {
                 try {
                     $who = ($ticketRows | ForEach-Object { "$($_.Name) ($($_.Username))" }) -join ', '
+                    $usernames = ($ticketRows | ForEach-Object { $_.Username }) -join ', '
                     $resolution = "Offboarding complete for $who. All steps are done: AD account disabled, licenses and groups removed, " +
                                   "user files backed up and removed from the network shares, and AD account deleted. " +
                                   "Closed by $env:USERNAME on $(Get-Date -Format 'yyyy-MM-dd')."
-                    Close-Ticket -Ticket $ticketNumber -ResolutionNote $resolution
+                    Close-Ticket -Ticket $ticketNumber -ResolutionNote $resolution -Description "offboarding for $usernames"
                     $closedOn = Get-Date -Format 'yyyy-MM-dd'
                     foreach ($row in $ticketRows) { $row.'Ticket Closed' = $closedOn }
                     Save-OffboardCsv
