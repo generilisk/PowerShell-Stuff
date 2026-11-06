@@ -73,6 +73,14 @@ Ticket category to filter for after pulling by status. Defaults to "User Managem
 .PARAMETER SubCategory
 Ticket sub-category to filter for after pulling by status. Defaults to "Off-board".
 
+.PARAMETER AssignGroupId
+Freshservice group_id that open Off-board tickets are assigned to (numeric ID, not the name).
+Defaults to the Tier 2 group.
+
+.PARAMETER AssignAgentId
+Freshservice responder_id (agent ID) that open Off-board tickets are assigned to. The agent must be
+a member of the group above.
+
 .PARAMETER DisableExpired
 Switch. When set, for any row whose End Date has passed: disables the AD account, then
 removes the M365 licenses and the AD group memberships (except the primary group, e.g. Domain
@@ -134,6 +142,12 @@ param (
 
     [Parameter()]
     [string]$SubCategory = "Off-board",
+
+    [Parameter()]
+    [long]$AssignGroupId = 13000272117,
+
+    [Parameter()]
+    [long]$AssignAgentId = 13000472885,
 
     [Parameter()]
     [switch]$DisableExpired,
@@ -578,6 +592,49 @@ function Resolve-UncPath {
 
 # Checkpoint: keep the resolved usernames and the new column order even if the run is interrupted later
 Save-OffboardCsv
+
+# ============================================================
+# PART 4b: Low priority once every task is done; set group and agent
+# ============================================================
+# Priority 1 = Low. Only the open Off-board tickets pulled in Part 2 are touched, and only when
+# something needs to change. Problems here warn and never stop the run.
+
+if ($freshserviceOk -and $offboardTickets) {
+    foreach ($obTicket in $offboardTickets) {
+        try {
+            $changes = [ordered]@{}
+            if ($obTicket.group_id -ne $AssignGroupId)      { $changes['group_id']     = $AssignGroupId }
+            if ($obTicket.responder_id -ne $AssignAgentId)  { $changes['responder_id'] = $AssignAgentId }
+
+            # All tasks Completed (3) and at least one task exists. Same 'deleted' filter as Get-OpenTicketTasks.
+            if ($obTicket.priority -ne 1) {
+                $ticketTasks = @((Invoke-RestMethod -Uri "https://schc.freshservice.com/api/v2/tickets/$($obTicket.id)/tasks" -Headers $headers -ErrorAction Stop).tasks |
+                    Where-Object { -not $_.deleted })
+                if ($ticketTasks.Count -gt 0 -and @($ticketTasks | Where-Object { $_.status -ne 3 }).Count -eq 0) { $changes['priority'] = 1 }
+            }
+
+            if ($changes.Count -eq 0) { continue }
+            if ($WhatIfPreference) {
+                Write-Host "What if: ticket $($obTicket.id) would be updated: $($changes.Keys -join ', ')"
+                continue
+            }
+
+            $ticketUri = "https://schc.freshservice.com/api/v2/tickets/$($obTicket.id)"
+            $null = Invoke-RestMethod -Uri $ticketUri -Method Put -Headers $headers `
+                -ContentType 'application/json; charset=utf-8' -Body ($changes | ConvertTo-Json) -ErrorAction Stop
+
+            # Same check Close-Ticket does: a 200 reply doesn't prove the change was applied
+            $after      = (Invoke-RestMethod -Uri $ticketUri -Method Get -Headers $headers -ErrorAction Stop).ticket
+            $notApplied = @($changes.Keys | Where-Object { $after.$_ -ne $changes[$_] })
+            if ($notApplied.Count -gt 0) { Write-Warning "Ticket $($obTicket.id): Freshservice accepted the update but did not apply: $($notApplied -join ', ')" }
+            else { Write-Host "Ticket $($obTicket.id) updated: $($changes.Keys -join ', ')" -ForegroundColor Cyan }
+        }
+        catch {
+            $detail = if ($_.ErrorDetails.Message) { $_.ErrorDetails.Message } else { $_.Exception.Message }
+            Write-Warning "Could not update ticket $($obTicket.id): $detail"
+        }
+    }
+}
 
 # ============================================================
 # PART 5: Microsoft Graph connection (only needed for -DisableExpired)
