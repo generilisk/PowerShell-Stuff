@@ -594,6 +594,48 @@ function Resolve-UncPath {
 Save-OffboardCsv
 
 # ============================================================
+# PART 4a: Drop rows whose ticket is Closed
+# ============================================================
+# Status 5 = Closed. A failed lookup keeps the row. Each ticket is checked once, however many rows it has.
+# Under -WhatIf nothing is dropped; the rows are only reported.
+
+if ($freshserviceOk) {
+    $ticketIsClosed = @{}   # ticket number -> $true/$false
+
+    $keepRows = foreach ($row in $users) {
+        $ticketNumber = "$($row.Ticket)".Trim()
+        if ($ticketNumber -notmatch '^\d+$') { $row; continue }
+
+        if (-not $ticketIsClosed.ContainsKey($ticketNumber)) {
+            try {
+                $t = (Invoke-RestMethod -Uri "https://schc.freshservice.com/api/v2/tickets/$ticketNumber" -Headers $headers -ErrorAction Stop).ticket
+                $ticketIsClosed[$ticketNumber] = ($t.status -eq 5)
+            }
+            catch {
+                Write-Warning "Could not check ticket ${ticketNumber} (rows kept): $($_.Exception.Message)"
+                $ticketIsClosed[$ticketNumber] = $false
+            }
+        }
+
+        if (-not $ticketIsClosed[$ticketNumber]) { $row; continue }
+
+        if ([string]::IsNullOrWhiteSpace($row.'AD User Deleted')) {
+            Write-Warning "Ticket $ticketNumber is Closed but $($row.Name) has no AD deletion date."
+        }
+        if ($WhatIfPreference) {
+            Write-Host "What if: row for $($row.Name) (ticket $ticketNumber, Closed) would be dropped."
+            $row
+        }
+        else {
+            Write-Host "Dropped $($row.Name) (ticket $ticketNumber is Closed)." -ForegroundColor Cyan
+        }
+    }
+
+    $users = @($keepRows)
+    Save-OffboardCsv
+}
+
+# ============================================================
 # PART 4b: Low priority once every task is done; set group and agent
 # ============================================================
 # Priority 1 = Low. Only the open Off-board tickets pulled in Part 2 are touched, and only when
