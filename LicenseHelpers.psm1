@@ -134,11 +134,11 @@ function Resolve-UserLicense {
     callers should not re-implement it themselves.
 
     .PARAMETER Username
-    A bare username (e.g. "atippens"), a full UPN (e.g. "atippens@shastahealth.org"),
+    A bare username (e.g. "clarkent"), a full UPN (e.g. "clarkent@jla.org"),
     or an Entra object GUID.
 
     .PARAMETER DefaultDomain
-    Domain to append to bare usernames when constructing a UPN, e.g. "shastahealth.org".
+    Domain to append to bare usernames when constructing a UPN, e.g. "jla.org".
     Leave blank to skip straight to the onPremisesSamAccountName filter fallback.
 
     .PARAMETER TenantSkus
