@@ -55,7 +55,7 @@ shared with Get-OffboardListLicenses.ps1.
 The path to the CSV file. Defaults to C:\offboard\progress.csv.
 
 .PARAMETER DefaultDomain
-Domain appended to resolved usernames (e.g. "shastahealth.org") to form a UPN for the Graph lookup.
+Domain appended to resolved usernames (e.g. "jla.org") to form a UPN for the Graph lookup.
 
 .PARAMETER FreshserviceApiKey
 Your Freshservice API key. Optional - if omitted, the script retrieves it from the

@@ -40,7 +40,7 @@ param(
     # Optional CSV export path
     [string]$OutputFile,
 
-    # Domain to append to bare usernames (e.g. "shastahealth.org") to form a UPN, e.g. atippens -> atippens@shastahealth.org
+    # Domain to append to bare usernames (e.g. "jla.org") to form a UPN, e.g. clarkent -> clarkent@jla.org
     # Leave blank to skip this and rely on the onPremisesSamAccountName filter fallback instead.
     [string]$DefaultDomain = "shastahealth.org"
 )
