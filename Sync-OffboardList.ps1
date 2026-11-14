@@ -248,7 +248,7 @@ if ($csvFolder -and -not (Test-Path -Path $csvFolder)) {
     New-Item -Path $csvFolder -ItemType Directory -Force | Out-Null
 }
 
-if (-not (Test-Path -Path $Path)) {
+if (-not (Test-Path -Path $Path) -or (Get-Item -Path $Path).Length -eq 0) {
     Write-Host "Creating new CSV: $Path" -ForegroundColor Cyan
     $header = "Ticket,Name,Username,End Date,AD User Disabled,Licenses Noted,Licenses Removed,Groups Noted,Groups Removed,Profile Folder Work,AD User Deleted,Ticket Closed"
     Set-Content -Path $Path -Value $header -Encoding UTF8
@@ -571,7 +571,10 @@ function Get-OpenTicketTasks {
 # -WhatIf, and a save failure (e.g. the CSV is open in Excel) only warns.
 function Save-OffboardCsv {
     if ($WhatIfPreference) { return }
-    try { $users | Export-Csv -Path $Path -NoTypeInformation -ErrorAction Stop }
+    try {
+        if (@($users).Count -gt 0) { $users | Export-Csv -Path $Path -NoTypeInformation -ErrorAction Stop }
+        else { Set-Content -Path $Path -Value ($columnOrder -join ',') -Encoding UTF8 -ErrorAction Stop }
+    }
     catch { Write-Warning "Could not save progress to $Path (is it open in another program?): $($_.Exception.Message)" }
 }
 
@@ -1153,7 +1156,7 @@ if ($runDisable) {
 # PART 10: Save + summary output (all users, not just errors)
 # ============================================================
 
-$users | Export-Csv -Path $Path -NoTypeInformation
+Save-OffboardCsv
 
 Write-Host "`n=== Offboard List Summary ===" -ForegroundColor Cyan
 $users | Select-Object -Property $columnOrder | Format-Table -AutoSize -Wrap
